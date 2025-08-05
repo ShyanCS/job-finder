@@ -448,6 +448,10 @@ def extract_apply_links_from_career_page(career_url: str) -> list:
                     'text': link.get_text().strip() or 'Apply',
                     'url': full_url
                 })
+            
+            # Limit to maximum 3 apply links
+            if len(apply_links) >= 3:
+                break
         
         return apply_links
         
