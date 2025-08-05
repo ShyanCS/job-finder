@@ -1,5 +1,6 @@
 import os
 import json
+import requests
 from flask import Flask, request, jsonify, render_template
 from dotenv import load_dotenv
 import google.generativeai as genai
@@ -10,6 +11,11 @@ from sklearn.metrics.pairwise import cosine_similarity
 from flask_cors import CORS
 from datetime import datetime, timedelta
 import re
+from bs4 import BeautifulSoup
+import time
+import concurrent.futures
+from urllib.parse import urljoin, urlparse
+import logging
 
 # Load environment variables from .env file
 load_dotenv()
@@ -22,6 +28,10 @@ SERPAPI_KEY = os.getenv("SERPAPI_KEY")
 app = Flask(__name__, template_folder='templates', static_folder='static')
 CORS(app)
 
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 def parse_resume(file_stream) -> str:
     """Reads a PDF file stream and returns its text content."""
     try:
@@ -31,7 +41,7 @@ def parse_resume(file_stream) -> str:
             text += page.extract_text()
         return text
     except Exception as e:
-        print(f"Error parsing PDF: {e}")
+        logger.error(f"Error parsing PDF: {e}")
         return ""
 
 def get_job_titles(resume_text: str) -> list:
@@ -55,69 +65,302 @@ def get_job_titles(resume_text: str) -> list:
         data = json.loads(json_response_text)
         return data.get("job_titles", [])
     except Exception as e:
-        print(f"Error calling Gemini API: {e}")
+        logger.error(f"Error calling Gemini API: {e}")
         return []
 
-def discover_jobs_enhanced(job_titles: list, date_filter: str = "all") -> list:
-    """Enhanced job discovery using multiple search strategies."""
-    all_jobs = []
-    location = "Faridabad, Haryana, India"
+def scrape_linkedin_jobs(job_title: str, location: str = "India") -> list:
+    """Scrape jobs from LinkedIn using SerpApi."""
+    jobs = []
+    try:
+        params = {
+            "engine": "linkedin_jobs",
+            "keywords": job_title,
+            "location": location,
+            "api_key": SERPAPI_KEY,
+            "num": 20
+        }
+        
+        search = GoogleSearch(params)
+        results = search.get_dict()
+        
+        if "jobs_results" in results:
+            for job in results["jobs_results"]:
+                cleaned_job = clean_job_data(job, "LinkedIn")
+                if cleaned_job:
+                    jobs.append(cleaned_job)
+                    
+    except Exception as e:
+        logger.error(f"Error scraping LinkedIn jobs for '{job_title}': {e}")
     
-    # Define search engines and their configurations
+    return jobs
+
+def scrape_indeed_jobs(job_title: str, location: str = "India") -> list:
+    """Scrape jobs from Indeed using SerpApi."""
+    jobs = []
+    try:
+        params = {
+            "engine": "indeed",
+            "q": job_title,
+            "location": location,
+            "api_key": SERPAPI_KEY,
+            "num": 20
+        }
+        
+        search = GoogleSearch(params)
+        results = search.get_dict()
+        
+        if "jobs_results" in results:
+            for job in results["jobs_results"]:
+                cleaned_job = clean_job_data(job, "Indeed")
+                if cleaned_job:
+                    jobs.append(cleaned_job)
+                    
+    except Exception as e:
+        logger.error(f"Error scraping Indeed jobs for '{job_title}': {e}")
+    
+    return jobs
+
+def scrape_naukri_jobs(job_title: str, location: str = "India") -> list:
+    """Scrape jobs from Naukri.com using SerpApi."""
+    jobs = []
+    try:
+        params = {
+            "engine": "google_jobs",
+            "q": f"{job_title} site:naukri.com",
+            "location": location,
+            "api_key": SERPAPI_KEY,
+            "num": 15
+        }
+        
+        search = GoogleSearch(params)
+        results = search.get_dict()
+        
+        if "jobs_results" in results:
+            for job in results["jobs_results"]:
+                cleaned_job = clean_job_data(job, "Naukri")
+                if cleaned_job:
+                    jobs.append(cleaned_job)
+                    
+    except Exception as e:
+        logger.error(f"Error scraping Naukri jobs for '{job_title}': {e}")
+    
+    return jobs
+
+def find_career_page(company_name: str, company_url: str = None) -> str:
+    """Find the career page URL for a company."""
+    try:
+        # Common career page patterns
+        career_patterns = [
+            "/careers",
+            "/jobs",
+            "/career",
+            "/job",
+            "/work-with-us",
+            "/join-us",
+            "/opportunities"
+        ]
+        
+        if company_url:
+            base_url = company_url
+        else:
+            # Try to find company website using search
+            search_params = {
+                "engine": "google",
+                "q": f"{company_name} official website",
+                "api_key": SERPAPI_KEY,
+                "num": 1
+            }
+            
+            search = GoogleSearch(search_params)
+            results = search.get_dict()
+            
+            if "organic_results" in results and results["organic_results"]:
+                base_url = results["organic_results"][0].get("link", "")
+            else:
+                return None
+        
+        if not base_url:
+            return None
+            
+        # Try different career page URLs
+        for pattern in career_patterns:
+            career_url = urljoin(base_url, pattern)
+            try:
+                response = requests.get(career_url, timeout=10)
+                if response.status_code == 200:
+                    return career_url
+            except:
+                continue
+                
+        return None
+        
+    except Exception as e:
+        logger.error(f"Error finding career page for {company_name}: {e}")
+        return None
+
+def extract_apply_links_from_career_page(career_url: str) -> list:
+    """Extract apply links from a company's career page."""
+    apply_links = []
+    
+    try:
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        
+        response = requests.get(career_url, headers=headers, timeout=10)
+        if response.status_code != 200:
+            return apply_links
+            
+        soup = BeautifulSoup(response.content, 'html.parser')
+        
+        # Common apply link patterns
+        apply_patterns = [
+            'apply',
+            'apply now',
+            'apply for this position',
+            'submit application',
+            'apply online',
+            'apply here',
+            'apply today'
+        ]
+        
+        # Find all links
+        links = soup.find_all('a', href=True)
+        
+        for link in links:
+            link_text = link.get_text().lower().strip()
+            href = link.get('href', '')
+            
+            # Check if link text matches apply patterns
+            if any(pattern in link_text for pattern in apply_patterns):
+                full_url = urljoin(career_url, href)
+                apply_links.append({
+                    'text': link.get_text().strip(),
+                    'url': full_url
+                })
+            
+            # Also check href for apply patterns
+            elif any(pattern in href.lower() for pattern in apply_patterns):
+                full_url = urljoin(career_url, href)
+                apply_links.append({
+                    'text': link.get_text().strip() or 'Apply',
+                    'url': full_url
+                })
+        
+        return apply_links
+        
+    except Exception as e:
+        logger.error(f"Error extracting apply links from {career_url}: {e}")
+        return apply_links
+
+def enhance_job_with_apply_links(job: dict) -> dict:
+    """Enhance job with direct apply links from career page."""
+    try:
+        company_name = job.get('company_name', '')
+        if not company_name:
+            return job
+            
+        # Find career page
+        career_url = find_career_page(company_name)
+        if not career_url:
+            return job
+            
+        # Extract apply links
+        apply_links = extract_apply_links_from_career_page(career_url)
+        
+        if apply_links:
+            # Add career page and apply links to job
+            job['career_page'] = career_url
+            job['apply_links'] = apply_links
+            job['has_direct_apply'] = True
+        else:
+            job['has_direct_apply'] = False
+            
+        return job
+        
+    except Exception as e:
+        logger.error(f"Error enhancing job with apply links: {e}")
+        return job
+
+def discover_jobs_enhanced(job_titles: list, date_filter: str = "all") -> list:
+    """Enhanced job discovery using multiple job boards and career page analysis."""
+    all_jobs = []
+    
+    # Define search configurations for different job boards
     search_configs = [
         {
+            "name": "Google Jobs",
             "engine": "google_jobs",
-            "params": {
-                "location": location,
-                "num": 15,
-                "date_posted": get_date_filter_param(date_filter)
-            }
+            "locations": ["Faridabad, Haryana, India", "Delhi NCR, India", "Gurgaon, Haryana, India"],
+            "num": 15
         },
         {
-            "engine": "google_jobs",
-            "params": {
-                "location": "Delhi NCR, India",
-                "num": 10,
-                "date_posted": get_date_filter_param(date_filter)
-            }
+            "name": "LinkedIn",
+            "scraper": scrape_linkedin_jobs,
+            "locations": ["India"]
         },
         {
-            "engine": "google_jobs", 
-            "params": {
-                "location": "Gurgaon, Haryana, India",
-                "num": 10,
-                "date_posted": get_date_filter_param(date_filter)
-            }
+            "name": "Indeed",
+            "scraper": scrape_indeed_jobs,
+            "locations": ["India"]
+        },
+        {
+            "name": "Naukri",
+            "scraper": scrape_naukri_jobs,
+            "locations": ["India"]
         }
     ]
     
     for title in job_titles:
-        # Add variations of the job title for better coverage
+        # Generate title variations
         title_variations = generate_title_variations(title)
         
         for variation in title_variations:
             for config in search_configs:
-                params = {
-                    "engine": config["engine"],
-                    "q": variation,
-                    "api_key": SERPAPI_KEY,
-                    **config["params"]
-                }
-                
                 try:
-                    search = GoogleSearch(params)
-                    results = search.get_dict()
-                    if "jobs_results" in results:
-                        for job in results["jobs_results"]:
-                            cleaned_job = clean_job_data(job)
-                            if cleaned_job and is_recent_job(cleaned_job, date_filter):
-                                # Check for duplicates
-                                if not is_duplicate_job(cleaned_job, all_jobs):
-                                    all_jobs.append(cleaned_job)
+                    if "scraper" in config:
+                        # Use custom scraper
+                        for location in config["locations"]:
+                            jobs = config["scraper"](variation, location)
+                            for job in jobs:
+                                if is_recent_job(job, date_filter) and not is_duplicate_job(job, all_jobs):
+                                    all_jobs.append(job)
+                    else:
+                        # Use SerpApi
+                        for location in config["locations"]:
+                            params = {
+                                "engine": config["engine"],
+                                "q": variation,
+                                "location": location,
+                                "api_key": SERPAPI_KEY,
+                                "num": config["num"],
+                                "date_posted": get_date_filter_param(date_filter)
+                            }
+                            
+                            search = GoogleSearch(params)
+                            results = search.get_dict()
+                            
+                            if "jobs_results" in results:
+                                for job in results["jobs_results"]:
+                                    cleaned_job = clean_job_data(job, config["name"])
+                                    if cleaned_job and is_recent_job(cleaned_job, date_filter):
+                                        if not is_duplicate_job(cleaned_job, all_jobs):
+                                            all_jobs.append(cleaned_job)
+                                            
                 except Exception as e:
-                    print(f"Error calling SerpApi for '{variation}' in {config['engine']}: {e}")
+                    logger.error(f"Error searching {config['name']} for '{variation}': {e}")
     
-    return all_jobs
+    # Enhance jobs with apply links (limit to avoid rate limiting)
+    enhanced_jobs = []
+    for job in all_jobs[:50]:  # Limit to first 50 jobs for apply link enhancement
+        enhanced_job = enhance_job_with_apply_links(job)
+        enhanced_jobs.append(enhanced_job)
+        time.sleep(1)  # Rate limiting
+    
+    # Add remaining jobs without enhancement
+    enhanced_jobs.extend(all_jobs[50:])
+    
+    return enhanced_jobs
 
 def generate_title_variations(title: str) -> list:
     """Generate variations of job titles for better search coverage."""
@@ -220,8 +463,8 @@ def is_duplicate_job(new_job: dict, existing_jobs: list) -> bool:
             return True
     return False
 
-def clean_job_data(job: dict) -> dict:
-    """Cleans and standardizes job data from SerpApi."""
+def clean_job_data(job: dict, source: str = "Unknown") -> dict:
+    """Cleans and standardizes job data from various sources."""
     try:
         cleaned = {
             'title': job.get('title', ''),
@@ -233,7 +476,11 @@ def clean_job_data(job: dict) -> dict:
             'salary': job.get('salary', ''),
             'job_type': job.get('job_type', ''),
             'apply_options': job.get('apply_options', []),
-            'related_links': job.get('related_links', [])
+            'related_links': job.get('related_links', []),
+            'source': source,
+            'career_page': None,
+            'apply_links': [],
+            'has_direct_apply': False
         }
         
         # Ensure we have at least a title and company
@@ -242,7 +489,7 @@ def clean_job_data(job: dict) -> dict:
             
         return cleaned
     except Exception as e:
-        print(f"Error cleaning job data: {e}")
+        logger.error(f"Error cleaning job data: {e}")
         return None
 
 def rank_jobs_by_similarity(resume_text: str, jobs: list) -> list:
@@ -302,7 +549,7 @@ def find_jobs():
         if not job_titles:
             return jsonify({"error": "Could not generate job titles from resume. Please try again."}), 500
             
-        # Discover Jobs with enhanced search
+        # Discover Jobs with enhanced search across multiple job boards
         discovered_jobs = discover_jobs_enhanced(job_titles, date_filter)
         if not discovered_jobs:
             return jsonify({"error": f"No jobs found for roles like {', '.join(job_titles)} in your area. Try updating your resume or checking back later."}), 404
@@ -314,8 +561,11 @@ def find_jobs():
         return jsonify(ranked_jobs)
 
     except Exception as e:
-        print(f"Unexpected error in find_jobs: {e}")
+        logger.error(f"Unexpected error in find_jobs: {e}")
         return jsonify({"error": "An unexpected error occurred. Please try again."}), 500
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    # Use environment variables for production deployment
+    port = int(os.environ.get('PORT', 5000))
+    debug = os.environ.get('FLASK_ENV') == 'development'
+    app.run(host='0.0.0.0', port=port, debug=debug)

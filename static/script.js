@@ -8,6 +8,8 @@ const resultsCount = document.getElementById('results-count');
 const jobsGrid = document.getElementById('jobs-grid');
 const resultsFilters = document.getElementById('results-filters');
 const dateFilterOptions = document.getElementById('date-filter-options');
+const statsSection = document.getElementById('stats-section');
+const statsGrid = document.getElementById('stats-grid');
 
 // Global variables
 let currentDateFilter = 'all';
@@ -135,6 +137,9 @@ function displayJobs(jobs) {
     // Update filters display
     updateResultsFilters();
     
+    // Update statistics
+    updateStatistics(jobs);
+    
     // Clear previous results
     jobsGrid.innerHTML = '';
     
@@ -146,6 +151,46 @@ function displayJobs(jobs) {
     
     // Show results section
     showResults();
+}
+
+function updateStatistics(jobs) {
+    const stats = {
+        totalJobs: jobs.length,
+        directApply: jobs.filter(job => job.has_direct_apply).length,
+        linkedinJobs: jobs.filter(job => job.source === 'LinkedIn').length,
+        indeedJobs: jobs.filter(job => job.source === 'Indeed').length,
+        googleJobs: jobs.filter(job => job.source === 'Google Jobs').length,
+        naukriJobs: jobs.filter(job => job.source === 'Naukri').length
+    };
+
+    statsGrid.innerHTML = `
+        <div class="stat-item">
+            <div class="stat-number">${stats.totalJobs}</div>
+            <div class="stat-label">Total Jobs</div>
+        </div>
+        <div class="stat-item">
+            <div class="stat-number">${stats.directApply}</div>
+            <div class="stat-label">Direct Apply</div>
+        </div>
+        <div class="stat-item">
+            <div class="stat-number">${stats.linkedinJobs}</div>
+            <div class="stat-label">LinkedIn</div>
+        </div>
+        <div class="stat-item">
+            <div class="stat-number">${stats.indeedJobs}</div>
+            <div class="stat-label">Indeed</div>
+        </div>
+        <div class="stat-item">
+            <div class="stat-number">${stats.googleJobs}</div>
+            <div class="stat-label">Google Jobs</div>
+        </div>
+        <div class="stat-item">
+            <div class="stat-number">${stats.naukriJobs}</div>
+            <div class="stat-label">Naukri</div>
+        </div>
+    `;
+
+    statsSection.style.display = 'block';
 }
 
 function updateResultsFilters() {
@@ -179,6 +224,14 @@ function createJobCard(job) {
     title.className = 'job-title';
     title.textContent = job.title || 'Job Title Not Available';
     jobCard.appendChild(title);
+
+    // Job source badge
+    if (job.source) {
+        const source = document.createElement('div');
+        source.className = 'job-source';
+        source.textContent = job.source;
+        jobCard.appendChild(source);
+    }
 
     // Company name
     if (job.company_name) {
@@ -248,6 +301,28 @@ function createJobCard(job) {
 
     actions.appendChild(applyBtn);
 
+    // Direct Apply button (if available)
+    if (job.has_direct_apply && job.apply_links && job.apply_links.length > 0) {
+        const directApplyBtn = document.createElement('a');
+        directApplyBtn.className = 'btn btn-success';
+        directApplyBtn.innerHTML = '<i class="fas fa-rocket"></i> Direct Apply';
+        directApplyBtn.href = job.apply_links[0].url;
+        directApplyBtn.target = '_blank';
+        directApplyBtn.title = 'Apply directly on company website';
+        actions.appendChild(directApplyBtn);
+    }
+
+    // Career Page button
+    if (job.career_page) {
+        const careerBtn = document.createElement('a');
+        careerBtn.className = 'btn btn-secondary';
+        careerBtn.innerHTML = '<i class="fas fa-building"></i> Career Page';
+        careerBtn.href = job.career_page;
+        careerBtn.target = '_blank';
+        careerBtn.title = 'Visit company career page';
+        actions.appendChild(careerBtn);
+    }
+
     // View Details button (if we have more info)
     if (job.job_id || job.related_links || job.salary || job.job_type) {
         const detailsBtn = document.createElement('button');
@@ -259,6 +334,37 @@ function createJobCard(job) {
 
     meta.appendChild(actions);
     jobCard.appendChild(meta);
+
+    // Apply links section (if available)
+    if (job.apply_links && job.apply_links.length > 0) {
+        const applyLinksSection = document.createElement('div');
+        applyLinksSection.className = 'apply-links';
+        
+        const applyLinksTitle = document.createElement('h4');
+        applyLinksTitle.innerHTML = '<i class="fas fa-link"></i> Direct Apply Links';
+        applyLinksSection.appendChild(applyLinksTitle);
+        
+        job.apply_links.forEach(link => {
+            const linkItem = document.createElement('div');
+            linkItem.className = 'apply-link-item';
+            
+            const linkText = document.createElement('div');
+            linkText.className = 'apply-link-text';
+            linkText.textContent = link.text || 'Apply';
+            
+            const linkBtn = document.createElement('a');
+            linkBtn.className = 'apply-link-btn';
+            linkBtn.href = link.url;
+            linkBtn.target = '_blank';
+            linkBtn.textContent = 'Apply';
+            
+            linkItem.appendChild(linkText);
+            linkItem.appendChild(linkBtn);
+            applyLinksSection.appendChild(linkItem);
+        });
+        
+        jobCard.appendChild(applyLinksSection);
+    }
 
     return jobCard;
 }
@@ -297,11 +403,20 @@ function showJobDetails(job) {
     if (job.posted_at) details.push(`Posted: ${job.posted_at}`);
     if (job.salary) details.push(`Salary: ${job.salary}`);
     if (job.job_type) details.push(`Type: ${job.job_type}`);
+    if (job.source) details.push(`Source: ${job.source}`);
+    if (job.career_page) details.push(`Career Page: ${job.career_page}`);
     
     if (job.related_links && job.related_links.length > 0) {
         details.push('Related Links:');
         job.related_links.forEach(link => {
             details.push(`- ${link.link} (${link.text})`);
+        });
+    }
+    
+    if (job.apply_links && job.apply_links.length > 0) {
+        details.push('Direct Apply Links:');
+        job.apply_links.forEach(link => {
+            details.push(`- ${link.url} (${link.text})`);
         });
     }
     
@@ -329,6 +444,7 @@ function showResults() {
 
 function hideResults() {
     resultsSection.style.display = 'none';
+    statsSection.style.display = 'none';
 }
 
 function showError(message) {
