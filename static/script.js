@@ -11,9 +11,19 @@ const dateFilterOptions = document.getElementById('date-filter-options');
 const statsSection = document.getElementById('stats-section');
 const statsGrid = document.getElementById('stats-grid');
 
+// Action buttons
+const saveJobsBtn = document.getElementById('save-jobs-btn');
+const loadSavedBtn = document.getElementById('load-saved-btn');
+const newSearchBtn = document.getElementById('new-search-btn');
+const clearSavedBtn = document.getElementById('clear-saved-btn');
+const loadSavedInfoBtn = document.getElementById('load-saved-info-btn');
+const savedJobsInfo = document.getElementById('saved-jobs-info');
+const savedStatus = document.getElementById('saved-status');
+
 // Global variables
 let currentDateFilter = 'all';
 let currentJobs = [];
+let currentResumeInfo = null;
 
 // File upload handling
 fileUploadArea.addEventListener('click', () => {
@@ -57,6 +67,16 @@ dateFilterOptions.addEventListener('click', (e) => {
         currentDateFilter = e.target.dataset.value;
     }
 });
+
+// Action button event listeners
+saveJobsBtn.addEventListener('click', saveJobs);
+loadSavedBtn.addEventListener('click', loadSavedJobs);
+newSearchBtn.addEventListener('click', startNewSearch);
+clearSavedBtn.addEventListener('click', clearSavedJobs);
+loadSavedInfoBtn.addEventListener('click', loadSavedJobs);
+
+// Check for saved jobs on page load
+document.addEventListener('DOMContentLoaded', checkForSavedJobs);
 
 function handleFileSelection() {
     const file = fileInput.files[0];
@@ -121,6 +141,13 @@ submitBtn.addEventListener('click', async function(event) {
         }
 
         currentJobs = jobs;
+        currentResumeInfo = {
+            filename: file.name,
+            size: file.size,
+            date_filter: currentDateFilter,
+            search_date: new Date().toISOString()
+        };
+        
         displayJobs(jobs);
 
     } catch (error) {
@@ -129,6 +156,150 @@ submitBtn.addEventListener('click', async function(event) {
         console.error('Fetch error:', error);
     }
 });
+
+async function saveJobs() {
+    if (currentJobs.length === 0) {
+        showError('No jobs to save. Please search for jobs first.');
+        return;
+    }
+
+    try {
+        const response = await fetch('/save-jobs', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                jobs: currentJobs,
+                resume_info: currentResumeInfo
+            })
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            showSavedStatus(result.message);
+        } else {
+            showError(result.error || 'Failed to save jobs');
+        }
+    } catch (error) {
+        showError('Network error while saving jobs');
+        console.error('Save error:', error);
+    }
+}
+
+async function loadSavedJobs() {
+    try {
+        const response = await fetch('/get-saved-jobs');
+        const savedData = await response.json();
+
+        if (savedData.jobs && savedData.jobs.length > 0) {
+            currentJobs = savedData.jobs;
+            currentResumeInfo = savedData.resume_info;
+            
+            displayJobs(savedData.jobs);
+            showSavedStatus(`Loaded ${savedData.jobs.length} saved jobs from ${formatDate(savedData.last_updated)}`);
+        } else {
+            showError('No saved jobs found');
+        }
+    } catch (error) {
+        showError('Network error while loading saved jobs');
+        console.error('Load error:', error);
+    }
+}
+
+async function clearSavedJobs() {
+    if (!confirm('Are you sure you want to clear all saved jobs? This action cannot be undone.')) {
+        return;
+    }
+
+    try {
+        const response = await fetch('/clear-saved-jobs', {
+            method: 'POST'
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            showSavedStatus(result.message);
+            hideSavedJobsInfo();
+        } else {
+            showError(result.error || 'Failed to clear saved jobs');
+        }
+    } catch (error) {
+        showError('Network error while clearing saved jobs');
+        console.error('Clear error:', error);
+    }
+}
+
+function startNewSearch() {
+    // Reset the form and show upload section
+    fileInput.value = '';
+    currentJobs = [];
+    currentResumeInfo = null;
+    
+    // Reset UI
+    const uploadText = fileUploadArea.querySelector('.upload-text');
+    const uploadHint = fileUploadArea.querySelector('.upload-hint');
+    uploadText.textContent = 'Click to upload or drag and drop';
+    uploadHint.textContent = 'Supports PDF files';
+    
+    submitBtn.disabled = true;
+    hideResults();
+    hideError();
+    hideSavedStatus();
+    
+    // Scroll to top
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+async function checkForSavedJobs() {
+    try {
+        const response = await fetch('/get-saved-jobs');
+        const savedData = await response.json();
+
+        if (savedData.jobs && savedData.jobs.length > 0) {
+            showSavedJobsInfo(savedData.jobs.length, savedData.last_updated);
+        }
+    } catch (error) {
+        console.error('Error checking for saved jobs:', error);
+    }
+}
+
+function showSavedJobsInfo(jobCount, lastUpdated) {
+    const infoText = `You have ${jobCount} saved jobs from ${formatDate(lastUpdated)}. Load them to avoid making new API requests.`;
+    savedJobsInfo.querySelector('p').textContent = infoText;
+    savedJobsInfo.style.display = 'block';
+}
+
+function hideSavedJobsInfo() {
+    savedJobsInfo.style.display = 'none';
+}
+
+function showSavedStatus(message) {
+    savedStatus.textContent = message;
+    savedStatus.classList.add('show');
+    
+    // Auto-hide after 5 seconds
+    setTimeout(() => {
+        savedStatus.classList.remove('show');
+    }, 5000);
+}
+
+function hideSavedStatus() {
+    savedStatus.classList.remove('show');
+}
+
+function formatDate(dateString) {
+    if (!dateString) return 'unknown date';
+    
+    try {
+        const date = new Date(dateString);
+        return date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
+    } catch {
+        return 'unknown date';
+    }
+}
 
 function displayJobs(jobs) {
     // Update results count

@@ -225,6 +225,115 @@
             font-weight: 500;
         }
 
+        .action-buttons {
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            margin-top: 20px;
+            flex-wrap: wrap;
+        }
+
+        .action-btn {
+            padding: 10px 20px;
+            border-radius: 25px;
+            text-decoration: none;
+            font-weight: 500;
+            transition: all 0.3s ease;
+            border: none;
+            cursor: pointer;
+            font-size: 0.9rem;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .action-btn-success {
+            background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+            color: white;
+        }
+
+        .action-btn-success:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+        }
+
+        .action-btn-info {
+            background: linear-gradient(135deg, #17a2b8 0%, #138496 100%);
+            color: white;
+        }
+
+        .action-btn-info:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+        }
+
+        .action-btn-warning {
+            background: linear-gradient(135deg, #ffc107 0%, #e0a800 100%);
+            color: #212529;
+        }
+
+        .action-btn-warning:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+        }
+
+        .action-btn-danger {
+            background: linear-gradient(135deg, #dc3545 0%, #c82333 100%);
+            color: white;
+        }
+
+        .action-btn-danger:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+        }
+
+        .saved-status {
+            background: #d4edda;
+            color: #155724;
+            padding: 10px 20px;
+            border-radius: 10px;
+            margin-top: 15px;
+            font-size: 0.9rem;
+            display: none;
+        }
+
+        .saved-status.show {
+            display: block;
+        }
+
+        .stats-section {
+            background: white;
+            border-radius: 20px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+        }
+
+        .stat-item {
+            text-align: center;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 10px;
+        }
+
+        .stat-number {
+            font-size: 1.5rem;
+            font-weight: 600;
+            color: #667eea;
+        }
+
+        .stat-label {
+            font-size: 0.8rem;
+            color: #666;
+            margin-top: 5px;
+        }
+
         .jobs-grid {
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
@@ -445,37 +554,23 @@
             margin-bottom: 20px;
         }
 
-        .stats-section {
-            background: white;
-            border-radius: 20px;
-            padding: 20px;
-            margin-bottom: 20px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
-        }
-
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-            gap: 15px;
-        }
-
-        .stat-item {
-            text-align: center;
+        .saved-jobs-info {
+            background: #e8f4fd;
+            color: #0066cc;
             padding: 15px;
-            background: #f8f9fa;
             border-radius: 10px;
+            margin-bottom: 20px;
+            text-align: center;
         }
 
-        .stat-number {
-            font-size: 1.5rem;
-            font-weight: 600;
-            color: #667eea;
+        .saved-jobs-info h3 {
+            margin-bottom: 10px;
+            color: #0066cc;
         }
 
-        .stat-label {
-            font-size: 0.8rem;
-            color: #666;
-            margin-top: 5px;
+        .saved-jobs-info p {
+            margin-bottom: 15px;
+            font-size: 0.9rem;
         }
 
         @media (max-width: 768px) {
@@ -510,6 +605,11 @@
 
             .stats-grid {
                 grid-template-columns: repeat(2, 1fr);
+            }
+
+            .action-buttons {
+                flex-direction: column;
+                align-items: center;
             }
         }
     </style>
@@ -565,6 +665,23 @@
                 <div class="results-count" id="results-count"></div>
                 <p>Here are the best job matches for your profile</p>
                 <div class="results-filters" id="results-filters"></div>
+                
+                <div class="action-buttons" id="action-buttons">
+                    <button class="action-btn action-btn-success" id="save-jobs-btn">
+                        <i class="fas fa-save"></i> Save Jobs
+                    </button>
+                    <button class="action-btn action-btn-info" id="load-saved-btn">
+                        <i class="fas fa-folder-open"></i> Load Saved
+                    </button>
+                    <button class="action-btn action-btn-warning" id="new-search-btn">
+                        <i class="fas fa-search"></i> New Search
+                    </button>
+                    <button class="action-btn action-btn-danger" id="clear-saved-btn">
+                        <i class="fas fa-trash"></i> Clear Saved
+                    </button>
+                </div>
+                
+                <div class="saved-status" id="saved-status"></div>
             </div>
 
             <div class="stats-section" id="stats-section" style="display: none;">
@@ -572,6 +689,14 @@
             </div>
 
             <div class="jobs-grid" id="jobs-grid"></div>
+        </div>
+
+        <div class="saved-jobs-info" id="saved-jobs-info" style="display: none;">
+            <h3><i class="fas fa-info-circle"></i> Saved Jobs Available</h3>
+            <p>You have saved jobs from a previous search. You can load them to avoid making new API requests.</p>
+            <button class="action-btn action-btn-info" id="load-saved-info-btn">
+                <i class="fas fa-folder-open"></i> Load Saved Jobs
+            </button>
         </div>
     </div>
 

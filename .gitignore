@@ -2,7 +2,7 @@
 .env
 .env.local
 .env.production
-
+saved_jobs.json
 # Python
 __pycache__/
 *.py[cod]

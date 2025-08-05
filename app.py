@@ -32,6 +32,29 @@ CORS(app)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Job storage file
+JOBS_FILE = 'saved_jobs.json'
+
+def load_saved_jobs():
+    """Load saved jobs from file."""
+    try:
+        if os.path.exists(JOBS_FILE):
+            with open(JOBS_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        return {"jobs": [], "last_updated": None, "resume_info": None}
+    except Exception as e:
+        logger.error(f"Error loading saved jobs: {e}")
+        return {"jobs": [], "last_updated": None, "resume_info": None}
+
+def save_jobs_to_file(jobs_data):
+    """Save jobs to file."""
+    try:
+        with open(JOBS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(jobs_data, f, ensure_ascii=False, indent=2)
+        logger.info(f"Saved {len(jobs_data.get('jobs', []))} jobs to file")
+    except Exception as e:
+        logger.error(f"Error saving jobs: {e}")
+
 def parse_resume(file_stream) -> str:
     """Reads a PDF file stream and returns its text content."""
     try:
@@ -44,37 +67,180 @@ def parse_resume(file_stream) -> str:
         logger.error(f"Error parsing PDF: {e}")
         return ""
 
-def get_job_titles(resume_text: str) -> list:
-    """Uses Gemini API to generate job titles from resume text."""
+def extract_experience_and_skills(resume_text: str) -> dict:
+    """Uses Gemini API to extract experience level and skills from resume."""
     if not resume_text:
-        return []
+        return {"experience_level": "entry", "years_experience": 0, "skills": [], "job_titles": []}
+    
     model = genai.GenerativeModel('gemini-1.5-flash')
     prompt = f"""
-    Analyze the following resume text. Based on the skills and experience, generate a comprehensive list of 8-10 relevant job titles for a job search in India.
-    Include both specific roles and broader categories. Return a JSON object with a single key "job_titles" containing this list.
+    Analyze the following resume text and extract:
+    1. Total years of experience (sum of all work experience), If the resume dont have end date for experience instead it says Present, then it will be Current month and year as end date.
+    2. Experience level (entry, junior, mid, senior, lead)
+    3. Key technical skills
+    4. Relevant job titles based on experience level, Job titles should be based on the skills provided in the resume not on the current role. There can be multiple variations off the job titles.
+
+    Experience Level Guidelines:
+    - Entry: 0-1 years (Associate, Entry Level, Junior)
+    - Junior: 1-3 years (SDE I, Full Stack Engineer I, Junior)
+    - Mid: 3-5 years (SDE II, Full Stack Engineer II, Mid-level)
+    - Senior: 5-8 years (Senior SDE, Senior Engineer, Senior)
+    - Lead: 8+ years (Lead Engineer, Principal Engineer, Lead)
+
+    Return a JSON object with:
+    {{
+        "experience_level": "entry|junior|mid|senior|lead",
+        "years_experience": number,
+        "skills": ["skill1", "skill2", ...],
+        "job_titles": ["title1", "title2", ...]
+    }}
 
     Resume Text:
     ---
     {resume_text}
     ---
     """
+    
     try:
         response = model.generate_content(prompt)
         # Clean up potential markdown formatting from the response
         json_response_text = response.text.strip().replace("```json", "").replace("```", "")
         data = json.loads(json_response_text)
-        return data.get("job_titles", [])
+        return data
     except Exception as e:
-        logger.error(f"Error calling Gemini API: {e}")
-        return []
+        logger.error(f"Error calling Gemini API for experience extraction: {e}")
+        return {"experience_level": "entry", "years_experience": 0, "skills": [], "job_titles": []}
 
-def scrape_linkedin_jobs(job_title: str, location: str = "India") -> list:
-    """Scrape jobs from LinkedIn using SerpApi."""
+def generate_experience_based_job_titles(experience_data: dict) -> list:
+    """Generate job titles based on experience level."""
+    experience_level = experience_data.get('experience_level', 'entry')
+    years_experience = experience_data.get('years_experience', 0)
+    
+    # Base job titles by experience level
+    experience_titles = {
+        'entry': [
+            'Associate Software Engineer',
+            'Entry Level Developer',
+            'Junior Software Engineer',
+            'Software Engineer I',
+            'Full Stack Developer I',
+            'Frontend Developer I',
+            'Backend Developer I',
+            'Associate Developer',
+            'Graduate Software Engineer',
+            'Junior Full Stack Engineer'
+        ],
+        'junior': [
+            'Software Engineer I',
+            'Full Stack Engineer I',
+            'Frontend Engineer I',
+            'Backend Engineer I',
+            'Junior Software Engineer',
+            'Software Developer I',
+            'Web Developer I',
+            'Application Developer I',
+            'Systems Engineer I',
+            'Junior Full Stack Developer'
+        ],
+        'mid': [
+            'Software Engineer II',
+            'Full Stack Engineer II',
+            'Frontend Engineer II',
+            'Backend Engineer II',
+            'Mid-level Software Engineer',
+            'Software Developer II',
+            'Web Developer II',
+            'Application Developer II',
+            'Systems Engineer II',
+            'Full Stack Developer II'
+        ],
+        'senior': [
+            'Senior Software Engineer',
+            'Senior Full Stack Engineer',
+            'Senior Frontend Engineer',
+            'Senior Backend Engineer',
+            'Senior Software Developer',
+            'Senior Web Developer',
+            'Senior Application Developer',
+            'Senior Systems Engineer',
+            'Lead Software Engineer',
+            'Principal Software Engineer'
+        ],
+        'lead': [
+            'Lead Software Engineer',
+            'Lead Full Stack Engineer',
+            'Lead Frontend Engineer',
+            'Lead Backend Engineer',
+            'Principal Software Engineer',
+            'Senior Lead Developer',
+            'Technical Lead',
+            'Engineering Lead',
+            'Team Lead',
+            'Senior Principal Engineer'
+        ]
+    }
+    
+    # Get titles for the experience level
+    titles = experience_titles.get(experience_level, experience_titles['entry'])
+    
+    # Add experience-specific keywords
+    if experience_level == 'entry':
+        titles.extend(['Associate', 'Entry Level', 'Graduate', 'Fresher'])
+    elif experience_level == 'junior':
+        titles.extend(['Junior', 'I', 'Early Career'])
+    elif experience_level == 'mid':
+        titles.extend(['II', 'Mid-level', 'Intermediate'])
+    elif experience_level == 'senior':
+        titles.extend(['Senior', 'III', 'Advanced'])
+    elif experience_level == 'lead':
+        titles.extend(['Lead', 'Principal', 'Senior Lead', 'IV'])
+    
+    return titles
+
+def get_experience_based_search_filters(experience_data: dict) -> dict:
+    """Get search filters based on experience level."""
+    experience_level = experience_data.get('experience_level', 'entry')
+    years_experience = experience_data.get('years_experience', 0)
+    
+    filters = {
+        'entry': {
+            'keywords': ['entry level', 'associate', 'junior', 'graduate', 'fresher', '0-1 years', '1 year'],
+            'exclude': ['senior', 'lead', 'principal', 'manager', 'director', '5+ years', '10+ years']
+        },
+        'junior': {
+            'keywords': ['junior', 'I', '1-3 years', '2 years', '3 years', 'early career'],
+            'exclude': ['senior', 'lead', 'principal', 'manager', 'director', '5+ years', '10+ years']
+        },
+        'mid': {
+            'keywords': ['II', 'mid-level', '3-5 years', '4 years', '5 years', 'intermediate'],
+            'exclude': ['entry level', 'associate', 'fresher', 'graduate', '10+ years']
+        },
+        'senior': {
+            'keywords': ['senior', 'III', '5+ years', '6 years', '7 years', '8 years', 'advanced'],
+            'exclude': ['entry level', 'associate', 'fresher', 'graduate', 'junior']
+        },
+        'lead': {
+            'keywords': ['lead', 'principal', 'senior lead', 'IV', '8+ years', '10+ years', 'team lead'],
+            'exclude': ['entry level', 'associate', 'fresher', 'graduate', 'junior']
+        }
+    }
+    
+    return filters.get(experience_level, filters['entry'])
+
+def scrape_linkedin_jobs(job_title: str, location: str = "India", experience_filters: dict = None) -> list:
+    """Scrape jobs from LinkedIn using SerpApi with experience filters."""
     jobs = []
     try:
+        # Add experience keywords to search
+        search_query = job_title
+        if experience_filters:
+            keywords = experience_filters.get('keywords', [])
+            if keywords:
+                search_query += f" {' '.join(keywords[:3])}"  # Add top 3 keywords
+        
         params = {
             "engine": "linkedin_jobs",
-            "keywords": job_title,
+            "keywords": search_query,
             "location": location,
             "api_key": SERPAPI_KEY,
             "num": 20
@@ -86,7 +252,7 @@ def scrape_linkedin_jobs(job_title: str, location: str = "India") -> list:
         if "jobs_results" in results:
             for job in results["jobs_results"]:
                 cleaned_job = clean_job_data(job, "LinkedIn")
-                if cleaned_job:
+                if cleaned_job and matches_experience_level(cleaned_job, experience_filters):
                     jobs.append(cleaned_job)
                     
     except Exception as e:
@@ -94,13 +260,20 @@ def scrape_linkedin_jobs(job_title: str, location: str = "India") -> list:
     
     return jobs
 
-def scrape_indeed_jobs(job_title: str, location: str = "India") -> list:
-    """Scrape jobs from Indeed using SerpApi."""
+def scrape_indeed_jobs(job_title: str, location: str = "India", experience_filters: dict = None) -> list:
+    """Scrape jobs from Indeed using SerpApi with experience filters."""
     jobs = []
     try:
+        # Add experience keywords to search
+        search_query = job_title
+        if experience_filters:
+            keywords = experience_filters.get('keywords', [])
+            if keywords:
+                search_query += f" {' '.join(keywords[:3])}"  # Add top 3 keywords
+        
         params = {
             "engine": "indeed",
-            "q": job_title,
+            "q": search_query,
             "location": location,
             "api_key": SERPAPI_KEY,
             "num": 20
@@ -112,7 +285,7 @@ def scrape_indeed_jobs(job_title: str, location: str = "India") -> list:
         if "jobs_results" in results:
             for job in results["jobs_results"]:
                 cleaned_job = clean_job_data(job, "Indeed")
-                if cleaned_job:
+                if cleaned_job and matches_experience_level(cleaned_job, experience_filters):
                     jobs.append(cleaned_job)
                     
     except Exception as e:
@@ -120,13 +293,20 @@ def scrape_indeed_jobs(job_title: str, location: str = "India") -> list:
     
     return jobs
 
-def scrape_naukri_jobs(job_title: str, location: str = "India") -> list:
-    """Scrape jobs from Naukri.com using SerpApi."""
+def scrape_naukri_jobs(job_title: str, location: str = "India", experience_filters: dict = None) -> list:
+    """Scrape jobs from Naukri.com using SerpApi with experience filters."""
     jobs = []
     try:
+        # Add experience keywords to search
+        search_query = f"{job_title} site:naukri.com"
+        if experience_filters:
+            keywords = experience_filters.get('keywords', [])
+            if keywords:
+                search_query += f" {' '.join(keywords[:3])}"  # Add top 3 keywords
+        
         params = {
             "engine": "google_jobs",
-            "q": f"{job_title} site:naukri.com",
+            "q": search_query,
             "location": location,
             "api_key": SERPAPI_KEY,
             "num": 15
@@ -138,13 +318,35 @@ def scrape_naukri_jobs(job_title: str, location: str = "India") -> list:
         if "jobs_results" in results:
             for job in results["jobs_results"]:
                 cleaned_job = clean_job_data(job, "Naukri")
-                if cleaned_job:
+                if cleaned_job and matches_experience_level(cleaned_job, experience_filters):
                     jobs.append(cleaned_job)
                     
     except Exception as e:
         logger.error(f"Error scraping Naukri jobs for '{job_title}': {e}")
     
     return jobs
+
+def matches_experience_level(job: dict, experience_filters: dict) -> bool:
+    """Check if job matches the experience level filters."""
+    if not experience_filters:
+        return True
+    
+    job_text = f"{job.get('title', '')} {job.get('description', '')}".lower()
+    
+    # Check for excluded keywords
+    exclude_keywords = experience_filters.get('exclude', [])
+    for keyword in exclude_keywords:
+        if keyword.lower() in job_text:
+            return False
+    
+    # Check for required keywords (at least one should match)
+    include_keywords = experience_filters.get('keywords', [])
+    if include_keywords:
+        has_matching_keyword = any(keyword.lower() in job_text for keyword in include_keywords)
+        if not has_matching_keyword:
+            return False
+    
+    return True
 
 def find_career_page(company_name: str, company_url: str = None) -> str:
     """Find the career page URL for a company."""
@@ -282,9 +484,15 @@ def enhance_job_with_apply_links(job: dict) -> dict:
         logger.error(f"Error enhancing job with apply links: {e}")
         return job
 
-def discover_jobs_enhanced(job_titles: list, date_filter: str = "all") -> list:
-    """Enhanced job discovery using multiple job boards and career page analysis."""
+def discover_jobs_enhanced(experience_data: dict, date_filter: str = "all") -> list:
+    """Enhanced job discovery using experience-based filtering."""
     all_jobs = []
+    
+    # Get experience-based job titles
+    job_titles = generate_experience_based_job_titles(experience_data)
+    
+    # Get experience filters
+    experience_filters = get_experience_based_search_filters(experience_data)
     
     # Define search configurations for different job boards
     search_configs = [
@@ -319,18 +527,25 @@ def discover_jobs_enhanced(job_titles: list, date_filter: str = "all") -> list:
             for config in search_configs:
                 try:
                     if "scraper" in config:
-                        # Use custom scraper
+                        # Use custom scraper with experience filters
                         for location in config["locations"]:
-                            jobs = config["scraper"](variation, location)
+                            jobs = config["scraper"](variation, location, experience_filters)
                             for job in jobs:
                                 if is_recent_job(job, date_filter) and not is_duplicate_job(job, all_jobs):
                                     all_jobs.append(job)
                     else:
-                        # Use SerpApi
+                        # Use SerpApi with experience keywords
                         for location in config["locations"]:
+                            # Add experience keywords to search query
+                            search_query = variation
+                            if experience_filters:
+                                keywords = experience_filters.get('keywords', [])
+                                if keywords:
+                                    search_query += f" {' '.join(keywords[:3])}"
+                            
                             params = {
                                 "engine": config["engine"],
-                                "q": variation,
+                                "q": search_query,
                                 "location": location,
                                 "api_key": SERPAPI_KEY,
                                 "num": config["num"],
@@ -344,7 +559,7 @@ def discover_jobs_enhanced(job_titles: list, date_filter: str = "all") -> list:
                                 for job in results["jobs_results"]:
                                     cleaned_job = clean_job_data(job, config["name"])
                                     if cleaned_job and is_recent_job(cleaned_job, date_filter):
-                                        if not is_duplicate_job(cleaned_job, all_jobs):
+                                        if not is_duplicate_job(cleaned_job, all_jobs) and matches_experience_level(cleaned_job, experience_filters):
                                             all_jobs.append(cleaned_job)
                                             
                 except Exception as e:
@@ -492,8 +707,8 @@ def clean_job_data(job: dict, source: str = "Unknown") -> dict:
         logger.error(f"Error cleaning job data: {e}")
         return None
 
-def rank_jobs_by_similarity(resume_text: str, jobs: list) -> list:
-    """Ranks jobs based on cosine similarity between resume and job description."""
+def rank_jobs_by_similarity(resume_text: str, jobs: list, experience_data: dict) -> list:
+    """Ranks jobs based on cosine similarity between resume and job description, with experience bonus."""
     if not jobs:
         return []
     
@@ -508,13 +723,59 @@ def rank_jobs_by_similarity(resume_text: str, jobs: list) -> list:
     # Calculate cosine similarity between the resume (index 0) and all jobs
     cosine_sim = cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:])
     
-    # Add the score to each job dictionary
+    # Add the score to each job dictionary with experience bonus
     for i, job in enumerate(jobs):
-        job['match_score'] = round(cosine_sim[0][i] * 100, 2) # as a percentage
+        base_score = cosine_sim[0][i] * 100
+        
+        # Add experience level bonus
+        experience_bonus = get_experience_bonus(job, experience_data)
+        final_score = min(100, base_score + experience_bonus)
+        
+        job['match_score'] = round(final_score, 2)
         
     # Sort jobs by score in descending order
     sorted_jobs = sorted(jobs, key=lambda x: x['match_score'], reverse=True)
     return sorted_jobs
+
+def get_experience_bonus(job: dict, experience_data: dict) -> float:
+    """Calculate experience bonus for job matching."""
+    experience_level = experience_data.get('experience_level', 'entry')
+    years_experience = experience_data.get('years_experience', 0)
+    
+    job_text = f"{job.get('title', '')} {job.get('description', '')}".lower()
+    
+    # Experience level bonuses
+    level_bonuses = {
+        'entry': {
+            'keywords': ['entry', 'associate', 'junior', 'graduate', 'fresher', '0-1', '1 year'],
+            'bonus': 15
+        },
+        'junior': {
+            'keywords': ['junior', 'I', '1-3', '2 years', '3 years', 'early career'],
+            'bonus': 10
+        },
+        'mid': {
+            'keywords': ['II', 'mid-level', '3-5', '4 years', '5 years', 'intermediate'],
+            'bonus': 5
+        },
+        'senior': {
+            'keywords': ['senior', 'III', '5+', '6 years', '7 years', '8 years', 'advanced'],
+            'bonus': 0
+        },
+        'lead': {
+            'keywords': ['lead', 'principal', 'senior lead', 'IV', '8+', '10+', 'team lead'],
+            'bonus': 0
+        }
+    }
+    
+    level_config = level_bonuses.get(experience_level, level_bonuses['entry'])
+    
+    # Check if job contains experience-appropriate keywords
+    for keyword in level_config['keywords']:
+        if keyword.lower() in job_text:
+            return level_config['bonus']
+    
+    return 0
 
 @app.route('/')
 def index():
@@ -544,18 +805,23 @@ def find_jobs():
         if not resume_text:
             return jsonify({"error": "Could not read text from resume PDF. Please ensure the file is not corrupted."}), 400
         
-        # Generate Job Titles
-        job_titles = get_job_titles(resume_text)
-        if not job_titles:
-            return jsonify({"error": "Could not generate job titles from resume. Please try again."}), 500
+        # Extract experience and skills
+        experience_data = extract_experience_and_skills(resume_text)
+        logger.info(f"Extracted experience data: {experience_data}")
+        # logger.info(f"Extracted resume text: {resume_text}")
+        
+        if not experience_data.get('job_titles'):
+            return jsonify({"error": "Could not extract experience information from resume. Please try again."}), 500
             
-        # Discover Jobs with enhanced search across multiple job boards
-        discovered_jobs = discover_jobs_enhanced(job_titles, date_filter)
+        # Discover Jobs with experience-based filtering
+        discovered_jobs = discover_jobs_enhanced(experience_data, date_filter)
         if not discovered_jobs:
-            return jsonify({"error": f"No jobs found for roles like {', '.join(job_titles)} in your area. Try updating your resume or checking back later."}), 404
+            experience_level = experience_data.get('experience_level', 'entry')
+            years = experience_data.get('years_experience', 0)
+            return jsonify({"error": f"No jobs found for {experience_level} level roles ({years} years experience) in your area. Try updating your resume or checking back later."}), 404
             
-        # Rank Jobs by Similarity
-        ranked_jobs = rank_jobs_by_similarity(resume_text, discovered_jobs)
+        # Rank Jobs by Similarity with experience bonus
+        ranked_jobs = rank_jobs_by_similarity(resume_text, discovered_jobs, experience_data)
 
         # Return the final sorted list to the frontend
         return jsonify(ranked_jobs)
@@ -564,8 +830,54 @@ def find_jobs():
         logger.error(f"Unexpected error in find_jobs: {e}")
         return jsonify({"error": "An unexpected error occurred. Please try again."}), 500
 
+@app.route('/save-jobs', methods=['POST'])
+def save_jobs():
+    """Save jobs to local storage."""
+    try:
+        data = request.get_json()
+        jobs = data.get('jobs', [])
+        resume_info = data.get('resume_info', {})
+        
+        # Prepare data to save
+        jobs_data = {
+            "jobs": jobs,
+            "last_updated": datetime.now().isoformat(),
+            "resume_info": resume_info
+        }
+        
+        # Save to file
+        save_jobs_to_file(jobs_data)
+        
+        return jsonify({"success": True, "message": f"Saved {len(jobs)} jobs successfully"})
+        
+    except Exception as e:
+        logger.error(f"Error saving jobs: {e}")
+        return jsonify({"error": "Failed to save jobs"}), 500
+
+@app.route('/get-saved-jobs', methods=['GET'])
+def get_saved_jobs():
+    """Retrieve saved jobs from local storage."""
+    try:
+        saved_data = load_saved_jobs()
+        return jsonify(saved_data)
+        
+    except Exception as e:
+        logger.error(f"Error loading saved jobs: {e}")
+        return jsonify({"error": "Failed to load saved jobs"}), 500
+
+@app.route('/clear-saved-jobs', methods=['POST'])
+def clear_saved_jobs():
+    """Clear saved jobs from local storage."""
+    try:
+        # Clear the file
+        if os.path.exists(JOBS_FILE):
+            os.remove(JOBS_FILE)
+        
+        return jsonify({"success": True, "message": "Saved jobs cleared successfully"})
+        
+    except Exception as e:
+        logger.error(f"Error clearing saved jobs: {e}")
+        return jsonify({"error": "Failed to clear saved jobs"}), 500
+
 if __name__ == '__main__':
-    # Use environment variables for production deployment
-    port = int(os.environ.get('PORT', 5000))
-    debug = os.environ.get('FLASK_ENV') == 'development'
-    app.run(host='0.0.0.0', port=port, debug=debug)
+    app.run(debug=True)
