@@ -488,7 +488,7 @@ def enhance_job_with_apply_links(job: dict) -> dict:
         logger.error(f"Error enhancing job with apply links: {e}")
         return job
 
-def discover_jobs_enhanced(experience_data: dict, date_filter: str = "all") -> list:
+def discover_jobs_enhanced(experience_data: dict, date_filter: str = "all", location_filter: str = "India") -> list:
     """Enhanced job discovery using experience-based filtering."""
     all_jobs = []
     
@@ -503,23 +503,23 @@ def discover_jobs_enhanced(experience_data: dict, date_filter: str = "all") -> l
         {
             "name": "Google Jobs",
             "engine": "google_jobs",
-            "locations": ["Faridabad, Haryana, India", "Delhi NCR, India", "Gurgaon, Haryana, India"],
+            "locations": [location_filter],
             "num": 15
         },
         {
             "name": "LinkedIn",
             "scraper": scrape_linkedin_jobs,
-            "locations": ["India"]
+            "locations": [location_filter]
         },
         {
             "name": "Indeed",
             "scraper": scrape_indeed_jobs,
-            "locations": ["India"]
+            "locations": [location_filter]
         },
         {
             "name": "Naukri",
             "scraper": scrape_naukri_jobs,
-            "locations": ["India"]
+            "locations": [location_filter]
         }
     ]
     
@@ -801,8 +801,9 @@ def find_jobs():
         if not file.filename.lower().endswith('.pdf'):
             return jsonify({"error": "Please upload a PDF file"}), 400
 
-        # Get date filter from request
+        # Get filters from request
         date_filter = request.form.get('date_filter', 'all')
+        location_filter = request.form.get('location_filter', 'India')
 
         # Parse Resume
         resume_text = parse_resume(file.stream)
@@ -818,7 +819,7 @@ def find_jobs():
             return jsonify({"error": "Could not extract experience information from resume. Please try again."}), 500
             
         # Discover Jobs with experience-based filtering
-        discovered_jobs = discover_jobs_enhanced(experience_data, date_filter)
+        discovered_jobs = discover_jobs_enhanced(experience_data, date_filter, location_filter)
         if not discovered_jobs:
             experience_level = experience_data.get('experience_level', 'entry')
             years = experience_data.get('years_experience', 0)

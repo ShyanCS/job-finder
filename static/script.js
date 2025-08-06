@@ -22,6 +22,7 @@ const savedStatus = document.getElementById('saved-status');
 
 // Global variables
 let currentDateFilter = 'all';
+let currentLocationFilter = 'India';
 let currentJobs = [];
 let currentResumeInfo = null;
 
@@ -65,6 +66,23 @@ dateFilterOptions.addEventListener('click', (e) => {
         
         // Update current filter
         currentDateFilter = e.target.dataset.value;
+    }
+});
+
+// Location filter handling
+const locationFilterOptions = document.getElementById('location-filter-options');
+locationFilterOptions.addEventListener('click', (e) => {
+    if (e.target.classList.contains('filter-option')) {
+        // Remove active class from all options
+        locationFilterOptions.querySelectorAll('.filter-option').forEach(option => {
+            option.classList.remove('active');
+        });
+        
+        // Add active class to clicked option
+        e.target.classList.add('active');
+        
+        // Update current filter
+        currentLocationFilter = e.target.dataset.value;
     }
 });
 
@@ -117,7 +135,8 @@ submitBtn.addEventListener('click', async function(event) {
     // Prepare form data
     const formData = new FormData();
     formData.append('resume', file);
-    formData.append('date_filter', currentDateFilter);
+            formData.append('date_filter', currentDateFilter);
+        formData.append('location_filter', currentLocationFilter);
 
     try {
         const response = await fetch('/find-jobs', {
@@ -145,6 +164,7 @@ submitBtn.addEventListener('click', async function(event) {
             filename: file.name,
             size: file.size,
             date_filter: currentDateFilter,
+        location_filter: currentLocationFilter,
             search_date: new Date().toISOString()
         };
         
@@ -373,6 +393,12 @@ function updateResultsFilters() {
     dateBadge.className = 'filter-badge';
     dateBadge.innerHTML = `<i class="fas fa-calendar"></i> ${dateFilterText}`;
     resultsFilters.appendChild(dateBadge);
+    
+    // Add location filter badge
+    const locationBadge = document.createElement('div');
+    locationBadge.className = 'filter-badge';
+    locationBadge.innerHTML = `<i class="fas fa-map-marker-alt"></i> ${currentLocationFilter}`;
+    resultsFilters.appendChild(locationBadge);
 }
 
 function getDateFilterText(filter) {
