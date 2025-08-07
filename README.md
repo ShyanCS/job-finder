@@ -266,7 +266,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 If this project helped you find your dream job, please give it a ⭐!
 
-[![Star History Chart](https://api.star-history.com/svg?repos=yourusername/ai-job-finder&type=Date)](https://star-history.com/#yourusername/ai-job-finder&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=yourusername/ai-job-finder&type=Date)](https://star-history.com/#ShyanCS/job-finder&Date)
 
 ---
 
