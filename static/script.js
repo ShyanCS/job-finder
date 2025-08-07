@@ -350,14 +350,19 @@ function updateStatistics(jobs) {
         directApply: jobs.filter(job => job.has_direct_apply).length,
         linkedinJobs: jobs.filter(job => job.source === 'LinkedIn').length,
         indeedJobs: jobs.filter(job => job.source === 'Indeed').length,
-        googleJobs: jobs.filter(job => job.source === 'Google Jobs').length,
-        naukriJobs: jobs.filter(job => job.source === 'Naukri').length
+        jsearchJobs: jobs.filter(job => job.source === 'JSearch API').length,
+        naukriJobs: jobs.filter(job => job.source === 'Naukri').length,
+        avgScore: jobs.length > 0 ? Math.round(jobs.reduce((sum, job) => sum + (job.match_score || 0), 0) / jobs.length) : 0
     };
 
     statsGrid.innerHTML = `
         <div class="stat-item">
             <div class="stat-number">${stats.totalJobs}</div>
             <div class="stat-label">Total Jobs</div>
+        </div>
+        <div class="stat-item">
+            <div class="stat-number">${stats.avgScore}%</div>
+            <div class="stat-label">Avg Match</div>
         </div>
         <div class="stat-item">
             <div class="stat-number">${stats.directApply}</div>
@@ -372,12 +377,12 @@ function updateStatistics(jobs) {
             <div class="stat-label">Indeed</div>
         </div>
         <div class="stat-item">
-            <div class="stat-number">${stats.googleJobs}</div>
-            <div class="stat-label">Google Jobs</div>
-        </div>
-        <div class="stat-item">
             <div class="stat-number">${stats.naukriJobs}</div>
             <div class="stat-label">Naukri</div>
+        </div>
+        <div class="stat-item">
+            <div class="stat-number">${stats.jsearchJobs}</div>
+            <div class="stat-label">JSearch</div>
         </div>
     `;
 
@@ -422,37 +427,43 @@ function createJobCard(job) {
     title.textContent = job.title || 'Job Title Not Available';
     jobCard.appendChild(title);
 
-    // Job source badge
-    if (job.source) {
-        const source = document.createElement('div');
-        source.className = 'job-source';
-        source.textContent = job.source;
-        jobCard.appendChild(source);
-    }
-
     // Company name
     if (job.company_name) {
         const company = document.createElement('div');
         company.className = 'job-company';
-        company.textContent = job.company_name;
+        company.innerHTML = `<i class="fas fa-building"></i> ${job.company_name}`;
         jobCard.appendChild(company);
     }
+
+    // Meta row (location, posted date, source)
+    const metaRow = document.createElement('div');
+    metaRow.className = 'job-meta-row';
 
     // Location
     if (job.location) {
         const location = document.createElement('div');
         location.className = 'job-location';
         location.innerHTML = `<i class="fas fa-map-marker-alt"></i> ${job.location}`;
-        jobCard.appendChild(location);
+        metaRow.appendChild(location);
     }
 
     // Posted date
     if (job.posted_at) {
         const posted = document.createElement('div');
         posted.className = 'job-posted';
-        posted.innerHTML = `<i class="fas fa-clock"></i> Posted: ${formatPostedDate(job.posted_at)}`;
-        jobCard.appendChild(posted);
+        posted.innerHTML = `<i class="fas fa-clock"></i> ${formatPostedDate(job.posted_at)}`;
+        metaRow.appendChild(posted);
     }
+
+    // Job source badge
+    if (job.source) {
+        const source = document.createElement('div');
+        source.className = 'job-source';
+        source.innerHTML = `<i class="fas fa-tag"></i> ${job.source}`;
+        metaRow.appendChild(source);
+    }
+
+    jobCard.appendChild(metaRow);
 
     // Description
     if (job.description) {
@@ -462,16 +473,16 @@ function createJobCard(job) {
         jobCard.appendChild(description);
     }
 
-    // Meta section (match score and actions)
-    const meta = document.createElement('div');
-    meta.className = 'job-meta';
+    // Footer section (match score and actions)
+    const footer = document.createElement('div');
+    footer.className = 'job-footer';
 
     // Match score
     if (job.match_score !== undefined) {
         const score = document.createElement('div');
         score.className = 'match-score';
-        score.textContent = `${job.match_score}% Match`;
-        meta.appendChild(score);
+        score.innerHTML = `<i class="fas fa-percentage"></i> ${job.match_score}% Match`;
+        footer.appendChild(score);
     }
 
     // Actions
@@ -481,7 +492,7 @@ function createJobCard(job) {
     // Apply button
     const applyBtn = document.createElement('a');
     applyBtn.className = 'btn btn-primary';
-    applyBtn.innerHTML = '<i class="fas fa-external-link-alt"></i> Apply Now';
+    applyBtn.innerHTML = '<i class="fas fa-external-link-alt"></i> Apply';
     applyBtn.target = '_blank';
 
     // Check if apply link exists
@@ -491,7 +502,7 @@ function createJobCard(job) {
     } else {
         // No apply link available
         applyBtn.className = 'btn btn-disabled';
-        applyBtn.textContent = 'No Apply Link';
+        applyBtn.innerHTML = '<i class="fas fa-times"></i> No Link';
         applyBtn.style.pointerEvents = 'none';
         applyBtn.title = 'No application link available for this position';
     }
@@ -502,7 +513,7 @@ function createJobCard(job) {
     if (job.has_direct_apply && job.apply_links && job.apply_links.length > 0) {
         const directApplyBtn = document.createElement('a');
         directApplyBtn.className = 'btn btn-success';
-        directApplyBtn.innerHTML = '<i class="fas fa-rocket"></i> Direct Apply';
+        directApplyBtn.innerHTML = '<i class="fas fa-rocket"></i> Direct';
         directApplyBtn.href = job.apply_links[0].url;
         directApplyBtn.target = '_blank';
         directApplyBtn.title = 'Apply directly on company website';
@@ -513,24 +524,15 @@ function createJobCard(job) {
     if (job.career_page) {
         const careerBtn = document.createElement('a');
         careerBtn.className = 'btn btn-secondary';
-        careerBtn.innerHTML = '<i class="fas fa-building"></i> Career Page';
+        careerBtn.innerHTML = '<i class="fas fa-building"></i> Career';
         careerBtn.href = job.career_page;
         careerBtn.target = '_blank';
         careerBtn.title = 'Visit company career page';
         actions.appendChild(careerBtn);
     }
 
-    // View Details button (if we have more info)
-    if (job.job_id || job.related_links || job.salary || job.job_type) {
-        const detailsBtn = document.createElement('button');
-        detailsBtn.className = 'btn btn-secondary';
-        detailsBtn.innerHTML = '<i class="fas fa-info-circle"></i> Details';
-        detailsBtn.onclick = () => showJobDetails(job);
-        actions.appendChild(detailsBtn);
-    }
-
-    meta.appendChild(actions);
-    jobCard.appendChild(meta);
+    footer.appendChild(actions);
+    jobCard.appendChild(footer);
 
     // Apply links section (if available)
     if (job.apply_links && job.apply_links.length > 0) {

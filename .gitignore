@@ -2,6 +2,8 @@
 .env
 .env.local
 .env.production
+# Keep .env.example for reference
+.kiro/
 saved_jobs.json
 # Python
 __pycache__/

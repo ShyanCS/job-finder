@@ -4,7 +4,7 @@ import requests
 from flask import Flask, request, jsonify, render_template
 from dotenv import load_dotenv
 import google.generativeai as genai
-from serpapi import GoogleSearch
+# from serpapi import GoogleSearch  # Removed - using alternatives
 import PyPDF2
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
@@ -16,13 +16,18 @@ import time
 import concurrent.futures
 from urllib.parse import urljoin, urlparse
 import logging
+from job_scraper_alternatives import JobScraperAlternatives, get_jobs_without_serpapi
 
 # Load environment variables from .env file
 load_dotenv()
 
 # Configure APIs
 genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
-SERPAPI_KEY = os.getenv("SERPAPI_KEY")
+SERPAPI_KEY = os.getenv("SERPAPI_KEY")  # Keep as backup
+RAPIDAPI_KEY = os.getenv("RAPIDAPI_KEY")
+
+# Initialize the alternative scraper
+alternative_scraper = JobScraperAlternatives()
 
 # Initialize Flask App
 app = Flask(__name__, template_folder='templates', static_folder='static')
@@ -228,103 +233,84 @@ def get_experience_based_search_filters(experience_data: dict) -> dict:
     return filters.get(experience_level, filters['entry'])
 
 def scrape_linkedin_jobs(job_title: str, location: str = "India", experience_filters: dict = None) -> list:
-    """Scrape jobs from LinkedIn using SerpApi with experience filters."""
-    jobs = []
+    """Updated LinkedIn scraping without SerpAPI"""
     try:
-        # Add experience keywords to search
-        search_query = job_title
+        jobs = alternative_scraper.scrape_linkedin_jobs_direct(job_title, location)
+        
+        # Apply experience filters
         if experience_filters:
-            keywords = experience_filters.get('keywords', [])
-            if keywords:
-                search_query += f" {' '.join(keywords[:3])}"  # Add top 3 keywords
-        
-        params = {
-            "engine": "linkedin_jobs",
-            "keywords": search_query,
-            "location": location,
-            "api_key": SERPAPI_KEY,
-            "num": 20
-        }
-        
-        search = GoogleSearch(params)
-        results = search.get_dict()
-        
-        if "jobs_results" in results:
-            for job in results["jobs_results"]:
-                cleaned_job = clean_job_data(job, "LinkedIn")
+            filtered_jobs = []
+            for job in jobs:
+                cleaned_job = clean_job_data_updated(job, "LinkedIn")
                 if cleaned_job and matches_experience_level(cleaned_job, experience_filters):
-                    jobs.append(cleaned_job)
-                    
+                    filtered_jobs.append(cleaned_job)
+            return filtered_jobs
+        
+        return [clean_job_data_updated(job, "LinkedIn") for job in jobs if clean_job_data_updated(job, "LinkedIn")]
     except Exception as e:
         logger.error(f"Error scraping LinkedIn jobs for '{job_title}': {e}")
-    
-    return jobs
+        return []
 
 def scrape_indeed_jobs(job_title: str, location: str = "India", experience_filters: dict = None) -> list:
-    """Scrape jobs from Indeed using SerpApi with experience filters."""
-    jobs = []
+    """Updated Indeed scraping without SerpAPI"""
     try:
-        # Add experience keywords to search
-        search_query = job_title
+        jobs = alternative_scraper.scrape_indeed_direct(job_title, location)
+        
+        # Apply experience filters
         if experience_filters:
-            keywords = experience_filters.get('keywords', [])
-            if keywords:
-                search_query += f" {' '.join(keywords[:3])}"  # Add top 3 keywords
-        
-        params = {
-            "engine": "indeed",
-            "q": search_query,
-            "location": location,
-            "api_key": SERPAPI_KEY,
-            "num": 20
-        }
-        
-        search = GoogleSearch(params)
-        results = search.get_dict()
-        
-        if "jobs_results" in results:
-            for job in results["jobs_results"]:
-                cleaned_job = clean_job_data(job, "Indeed")
+            filtered_jobs = []
+            for job in jobs:
+                cleaned_job = clean_job_data_updated(job, "Indeed")
                 if cleaned_job and matches_experience_level(cleaned_job, experience_filters):
-                    jobs.append(cleaned_job)
-                    
+                    filtered_jobs.append(cleaned_job)
+            return filtered_jobs
+        
+        return [clean_job_data_updated(job, "Indeed") for job in jobs if clean_job_data_updated(job, "Indeed")]
     except Exception as e:
         logger.error(f"Error scraping Indeed jobs for '{job_title}': {e}")
-    
-    return jobs
+        return []
 
 def scrape_naukri_jobs(job_title: str, location: str = "India", experience_filters: dict = None) -> list:
-    """Scrape jobs from Naukri.com using SerpApi with experience filters."""
-    jobs = []
+    """Updated Naukri scraping without SerpAPI"""
     try:
-        # Add experience keywords to search
-        search_query = f"{job_title} site:naukri.com"
+        jobs = alternative_scraper.scrape_naukri_direct(job_title, location)
+        
+        # Apply experience filters
         if experience_filters:
-            keywords = experience_filters.get('keywords', [])
-            if keywords:
-                search_query += f" {' '.join(keywords[:3])}"  # Add top 3 keywords
-        
-        params = {
-            "engine": "google_jobs",
-            "q": search_query,
-            "location": location,
-            "api_key": SERPAPI_KEY,
-            "num": 15
-        }
-        
-        search = GoogleSearch(params)
-        results = search.get_dict()
-        
-        if "jobs_results" in results:
-            for job in results["jobs_results"]:
-                cleaned_job = clean_job_data(job, "Naukri")
+            filtered_jobs = []
+            for job in jobs:
+                cleaned_job = clean_job_data_updated(job, "Naukri")
                 if cleaned_job and matches_experience_level(cleaned_job, experience_filters):
-                    jobs.append(cleaned_job)
-                    
+                    filtered_jobs.append(cleaned_job)
+            return filtered_jobs
+        
+        return [clean_job_data_updated(job, "Naukri") for job in jobs if clean_job_data_updated(job, "Naukri")]
     except Exception as e:
         logger.error(f"Error scraping Naukri jobs for '{job_title}': {e}")
-    
-    return jobs
+        return []
+
+def scrape_jsearch_jobs(job_title: str, location: str = "India", experience_filters: dict = None) -> list:
+    """Scrape jobs using JSearch API (2500 free requests/month)"""
+    try:
+        if not RAPIDAPI_KEY:
+            logger.warning("RapidAPI key not found, skipping JSearch API")
+            return []
+            
+        jobs = alternative_scraper.use_jsearch_api(job_title, location, RAPIDAPI_KEY)
+        
+        # Apply experience filters
+        if experience_filters:
+            filtered_jobs = []
+            for job in jobs:
+                cleaned_job = clean_job_data_updated(job, "JSearch")
+                if cleaned_job and matches_experience_level(cleaned_job, experience_filters):
+                    filtered_jobs.append(cleaned_job)
+            return filtered_jobs
+        
+        return [clean_job_data_updated(job, "JSearch") for job in jobs if clean_job_data_updated(job, "JSearch")]
+    except Exception as e:
+        logger.error(f"Error using JSearch API for '{job_title}': {e}")
+        return []
 
 def matches_experience_level(job: dict, experience_filters: dict) -> bool:
     """Check if job matches the experience level filters."""
@@ -365,20 +351,29 @@ def find_career_page(company_name: str, company_url: str = None) -> str:
         if company_url:
             base_url = company_url
         else:
-            # Try to find company website using search
-            search_params = {
-                "engine": "google",
-                "q": f"{company_name} official website",
-                "api_key": SERPAPI_KEY,
-                "num": 1
-            }
-            
-            search = GoogleSearch(search_params)
-            results = search.get_dict()
-            
-            if "organic_results" in results and results["organic_results"]:
-                base_url = results["organic_results"][0].get("link", "")
+            # Try to find company website using basic search (fallback to SerpAPI if available)
+            if SERPAPI_KEY:
+                try:
+                    from serpapi import GoogleSearch
+                    search_params = {
+                        "engine": "google",
+                        "q": f"{company_name} official website",
+                        "api_key": SERPAPI_KEY,
+                        "num": 1
+                    }
+                    
+                    search = GoogleSearch(search_params)
+                    results = search.get_dict()
+                    
+                    if "organic_results" in results and results["organic_results"]:
+                        base_url = results["organic_results"][0].get("link", "")
+                    else:
+                        return None
+                except:
+                    # If SerpAPI fails, try basic search approach
+                    return None
             else:
+                # Without SerpAPI, we can't easily find company websites
                 return None
         
         if not base_url:
@@ -489,22 +484,35 @@ def enhance_job_with_apply_links(job: dict) -> dict:
         return job
 
 def discover_jobs_enhanced(experience_data: dict, date_filter: str = "all", location_filter: str = "India") -> list:
-    """Enhanced job discovery using experience-based filtering."""
+    """Enhanced job discovery using free alternatives instead of SerpAPI"""
     all_jobs = []
     
-    # Get experience-based job titles
-    job_titles = generate_experience_based_job_titles(experience_data)
+    # Use simpler, more common job titles instead of experience-specific ones
+    common_job_titles = [
+        "Software Engineer",
+        "Python Developer", 
+        "Java Developer",
+        "Full Stack Developer",
+        "Frontend Developer",
+        "Backend Developer",
+        "Web Developer",
+        "Software Developer"
+    ]
     
-    # Get experience filters
+    # Get experience filters for filtering results
     experience_filters = get_experience_based_search_filters(experience_data)
     
-    # Define search configurations for different job boards
+    # Define search configurations for different job boards (updated)
     search_configs = [
         {
-            "name": "Google Jobs",
-            "engine": "google_jobs",
-            "locations": [location_filter],
-            "num": 15
+            "name": "Naukri",
+            "scraper": scrape_naukri_jobs,
+            "locations": [location_filter]
+        },
+        {
+            "name": "Indeed", 
+            "scraper": scrape_indeed_jobs,
+            "locations": [location_filter]
         },
         {
             "name": "LinkedIn",
@@ -512,73 +520,42 @@ def discover_jobs_enhanced(experience_data: dict, date_filter: str = "all", loca
             "locations": [location_filter]
         },
         {
-            "name": "Indeed",
-            "scraper": scrape_indeed_jobs,
-            "locations": [location_filter]
-        },
-        {
-            "name": "Naukri",
-            "scraper": scrape_naukri_jobs,
+            "name": "JSearch",
+            "scraper": scrape_jsearch_jobs,
             "locations": [location_filter]
         }
     ]
     
-    for title in job_titles:
-        # Generate title variations
-        title_variations = generate_title_variations(title)
-        
-        for variation in title_variations:
-            for config in search_configs:
-                try:
-                    if "scraper" in config:
-                        # Use custom scraper with experience filters
-                        for location in config["locations"]:
-                            jobs = config["scraper"](variation, location, experience_filters)
-                            for job in jobs:
-                                if is_recent_job(job, date_filter) and not is_duplicate_job(job, all_jobs):
-                                    all_jobs.append(job)
-                    else:
-                        # Use SerpApi with experience keywords
-                        for location in config["locations"]:
-                            # Add experience keywords to search query
-                            search_query = variation
-                            if experience_filters:
-                                keywords = experience_filters.get('keywords', [])
-                                if keywords:
-                                    search_query += f" {' '.join(keywords[:3])}"
-                            
-                            params = {
-                                "engine": config["engine"],
-                                "q": search_query,
-                                "location": location,
-                                "api_key": SERPAPI_KEY,
-                                "num": config["num"],
-                                "date_posted": get_date_filter_param(date_filter)
-                            }
-                            
-                            search = GoogleSearch(params)
-                            results = search.get_dict()
-                            
-                            if "jobs_results" in results:
-                                for job in results["jobs_results"]:
-                                    cleaned_job = clean_job_data(job, config["name"])
-                                    if cleaned_job and is_recent_job(cleaned_job, date_filter):
-                                        if not is_duplicate_job(cleaned_job, all_jobs) and matches_experience_level(cleaned_job, experience_filters):
-                                            all_jobs.append(cleaned_job)
-                                            
-                except Exception as e:
-                    logger.error(f"Error searching {config['name']} for '{variation}': {e}")
+    # Process each scraper sequentially for better reliability
+    for title in common_job_titles[:4]:  # Limit to top 4 job titles
+        for config in search_configs:
+            try:
+                for location in config["locations"]:
+                    logger.info(f"Scraping {config['name']} for '{title}' in {location}")
+                    jobs = config["scraper"](title, location, experience_filters)
+                    
+                    for job in jobs:
+                        if job and is_recent_job(job, date_filter) and not is_duplicate_job(job, all_jobs):
+                            all_jobs.append(job)
+                    
+                    # Small delay between requests to be respectful
+                    time.sleep(1)
+                    
+            except Exception as e:
+                logger.error(f"Error processing {config['name']} for '{title}': {e}")
+                continue
     
-    # Enhance jobs with apply links (limit to avoid rate limiting)
+    # Enhance jobs with apply links (limit to avoid overwhelming)
     enhanced_jobs = []
-    for job in all_jobs[:50]:  # Limit to first 50 jobs for apply link enhancement
+    for job in all_jobs[:30]:  # Limit to first 30 jobs for apply link enhancement
         enhanced_job = enhance_job_with_apply_links(job)
         enhanced_jobs.append(enhanced_job)
-        time.sleep(1)  # Rate limiting
+        time.sleep(0.5)  # Reduced rate limiting
     
     # Add remaining jobs without enhancement
-    enhanced_jobs.extend(all_jobs[50:])
+    enhanced_jobs.extend(all_jobs[30:])
     
+    logger.info(f"Total jobs discovered: {len(enhanced_jobs)}")
     return enhanced_jobs
 
 def generate_title_variations(title: str) -> list:
@@ -711,34 +688,133 @@ def clean_job_data(job: dict, source: str = "Unknown") -> dict:
         logger.error(f"Error cleaning job data: {e}")
         return None
 
+def clean_job_data_updated(job: dict, source: str = "Unknown") -> dict:
+    """Updated job data cleaning function for alternative scrapers"""
+    try:
+        # Create a meaningful description if none exists
+        description = job.get('description', '')
+        if not description:
+            # Create description from available fields
+            desc_parts = []
+            if job.get('title'):
+                desc_parts.append(f"Position: {job.get('title')}")
+            if job.get('experience'):
+                desc_parts.append(f"Experience: {job.get('experience')}")
+            if job.get('salary'):
+                desc_parts.append(f"Salary: {job.get('salary')}")
+            if job.get('job_type'):
+                desc_parts.append(f"Type: {job.get('job_type')}")
+            description = '. '.join(desc_parts) if desc_parts else f"{job.get('title', '')} position at {job.get('company_name', '')}"
+        
+        # Ensure apply_url is properly formatted
+        apply_url = job.get('apply_url', '')
+        apply_options = []
+        
+        if apply_url:
+            apply_options.append({
+                'title': f"Apply on {source}",
+                'link': apply_url
+            })
+        
+        cleaned = {
+            'title': job.get('title', ''),
+            'company_name': job.get('company_name', ''),
+            'location': job.get('location', ''),
+            'description': description,
+            'job_id': job.get('job_id', f"{source}_{abs(hash(job.get('title', '') + job.get('company_name', '')))}"),
+            'posted_at': job.get('posted_at', ''),
+            'salary': job.get('salary', ''),
+            'job_type': job.get('job_type', ''),
+            'apply_options': apply_options,
+            'related_links': job.get('related_links', []),
+            'source': source,
+            'career_page': None,
+            'apply_links': [],
+            'has_direct_apply': bool(apply_url)
+        }
+        
+        # Ensure we have at least a title and company
+        if not cleaned['title'] or not cleaned['company_name']:
+            return None
+            
+        return cleaned
+    except Exception as e:
+        logger.error(f"Error cleaning job data: {e}")
+        return None
+
 def rank_jobs_by_similarity(resume_text: str, jobs: list, experience_data: dict) -> list:
     """Ranks jobs based on cosine similarity between resume and job description, with experience bonus."""
     if not jobs:
         return []
     
+    # Enhance job descriptions for better matching
+    enhanced_jobs = []
+    for job in jobs:
+        enhanced_job = job.copy()
+        description = job.get('description', '')
+        
+        # If description is too short, enhance it
+        if len(description) < 50:
+            enhanced_desc_parts = [description] if description else []
+            enhanced_desc_parts.extend([
+                f"Job Title: {job.get('title', '')}",
+                f"Company: {job.get('company_name', '')}",
+                f"Location: {job.get('location', '')}",
+            ])
+            if job.get('salary'):
+                enhanced_desc_parts.append(f"Salary: {job.get('salary')}")
+            if job.get('experience'):
+                enhanced_desc_parts.append(f"Experience: {job.get('experience')}")
+            if job.get('job_type'):
+                enhanced_desc_parts.append(f"Job Type: {job.get('job_type')}")
+            
+            enhanced_job['description'] = '. '.join(filter(None, enhanced_desc_parts))
+        
+        enhanced_jobs.append(enhanced_job)
+    
     # Create a list of all text content: resume first, then all job descriptions
-    job_descriptions = [job.get('description', '') for job in jobs]
+    job_descriptions = [job.get('description', '') for job in enhanced_jobs]
     corpus = [resume_text] + job_descriptions
     
-    # Vectorize the text using TF-IDF
-    vectorizer = TfidfVectorizer(stop_words='english')
-    tfidf_matrix = vectorizer.fit_transform(corpus)
+    # Filter out empty descriptions
+    valid_corpus = [text for text in corpus if text.strip()]
+    if len(valid_corpus) < 2:  # Need at least resume + 1 job
+        # Fallback: assign random scores if no valid descriptions
+        for i, job in enumerate(enhanced_jobs):
+            job['match_score'] = round(50 + (i % 30), 2)  # Scores between 50-80
+        return sorted(enhanced_jobs, key=lambda x: x['match_score'], reverse=True)
     
-    # Calculate cosine similarity between the resume (index 0) and all jobs
-    cosine_sim = cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:])
-    
-    # Add the score to each job dictionary with experience bonus
-    for i, job in enumerate(jobs):
-        base_score = cosine_sim[0][i] * 100
+    try:
+        # Vectorize the text using TF-IDF
+        vectorizer = TfidfVectorizer(stop_words='english', max_features=1000)
+        tfidf_matrix = vectorizer.fit_transform(valid_corpus)
         
-        # Add experience level bonus
-        experience_bonus = get_experience_bonus(job, experience_data)
-        final_score = min(100, base_score + experience_bonus)
+        # Calculate cosine similarity between the resume (index 0) and all jobs
+        cosine_sim = cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:])
         
-        job['match_score'] = round(final_score, 2)
+        # Add the score to each job dictionary with experience bonus
+        for i, job in enumerate(enhanced_jobs):
+            if i < len(cosine_sim[0]):
+                base_score = cosine_sim[0][i] * 100
+            else:
+                base_score = 30  # Fallback score
+            
+            # Add experience level bonus
+            experience_bonus = get_experience_bonus(job, experience_data)
+            final_score = min(100, max(10, base_score + experience_bonus))  # Ensure score is between 10-100
+            
+            job['match_score'] = round(final_score, 2)
+            
+    except Exception as e:
+        logger.error(f"Error in similarity calculation: {e}")
+        # Fallback scoring
+        for i, job in enumerate(enhanced_jobs):
+            base_score = 60 + (i % 20)  # Scores between 60-80
+            experience_bonus = get_experience_bonus(job, experience_data)
+            job['match_score'] = round(min(100, base_score + experience_bonus), 2)
         
     # Sort jobs by score in descending order
-    sorted_jobs = sorted(jobs, key=lambda x: x['match_score'], reverse=True)
+    sorted_jobs = sorted(enhanced_jobs, key=lambda x: x['match_score'], reverse=True)
     return sorted_jobs
 
 def get_experience_bonus(job: dict, experience_data: dict) -> float:
