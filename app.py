@@ -6,8 +6,9 @@ from dotenv import load_dotenv
 import google.generativeai as genai
 # from serpapi import GoogleSearch  # Removed - using alternatives
 import PyPDF2
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
+# Removed scikit-learn dependency for deployment compatibility
+import math
+from collections import Counter
 from flask_cors import CORS
 from datetime import datetime, timedelta
 import re
@@ -742,8 +743,31 @@ def clean_job_data_updated(job: dict, source: str = "Unknown") -> dict:
         logger.error(f"Error cleaning job data: {e}")
         return None
 
+def simple_text_similarity(text1: str, text2: str) -> float:
+    """Calculate simple text similarity using word overlap."""
+    if not text1 or not text2:
+        return 0.0
+    
+    # Convert to lowercase and split into words
+    words1 = set(text1.lower().split())
+    words2 = set(text2.lower().split())
+    
+    # Remove common stop words
+    stop_words = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'is', 'are', 'was', 'were', 'be', 'been', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should'}
+    words1 = words1 - stop_words
+    words2 = words2 - stop_words
+    
+    if not words1 or not words2:
+        return 0.0
+    
+    # Calculate Jaccard similarity
+    intersection = len(words1.intersection(words2))
+    union = len(words1.union(words2))
+    
+    return intersection / union if union > 0 else 0.0
+
 def rank_jobs_by_similarity(resume_text: str, jobs: list, experience_data: dict) -> list:
-    """Ranks jobs based on cosine similarity between resume and job description, with experience bonus."""
+    """Ranks jobs based on simple text similarity between resume and job description, with experience bonus."""
     if not jobs:
         return []
     
@@ -772,32 +796,14 @@ def rank_jobs_by_similarity(resume_text: str, jobs: list, experience_data: dict)
         
         enhanced_jobs.append(enhanced_job)
     
-    # Create a list of all text content: resume first, then all job descriptions
-    job_descriptions = [job.get('description', '') for job in enhanced_jobs]
-    corpus = [resume_text] + job_descriptions
-    
-    # Filter out empty descriptions
-    valid_corpus = [text for text in corpus if text.strip()]
-    if len(valid_corpus) < 2:  # Need at least resume + 1 job
-        # Fallback: assign random scores if no valid descriptions
-        for i, job in enumerate(enhanced_jobs):
-            job['match_score'] = round(50 + (i % 30), 2)  # Scores between 50-80
-        return sorted(enhanced_jobs, key=lambda x: x['match_score'], reverse=True)
-    
     try:
-        # Vectorize the text using TF-IDF
-        vectorizer = TfidfVectorizer(stop_words='english', max_features=1000)
-        tfidf_matrix = vectorizer.fit_transform(valid_corpus)
-        
-        # Calculate cosine similarity between the resume (index 0) and all jobs
-        cosine_sim = cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:])
-        
-        # Add the score to each job dictionary with experience bonus
+        # Calculate similarity for each job
         for i, job in enumerate(enhanced_jobs):
-            if i < len(cosine_sim[0]):
-                base_score = cosine_sim[0][i] * 100
-            else:
-                base_score = 30  # Fallback score
+            job_text = job.get('description', '')
+            
+            # Calculate base similarity score
+            similarity = simple_text_similarity(resume_text, job_text)
+            base_score = similarity * 100
             
             # Add experience level bonus
             experience_bonus = get_experience_bonus(job, experience_data)
