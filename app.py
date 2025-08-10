@@ -6,7 +6,9 @@ from dotenv import load_dotenv
 import google.generativeai as genai
 # from serpapi import GoogleSearch  # Removed - using alternatives
 import PyPDF2
-# Removed scikit-learn dependency for deployment compatibility
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+import numpy as np
 import math
 from collections import Counter
 from flask_cors import CORS
@@ -38,28 +40,18 @@ CORS(app)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Job storage file
-JOBS_FILE = 'saved_jobs.json'
+# File-based job storage removed - now using localStorage
+# JOBS_FILE = 'saved_jobs.json'
 
-def load_saved_jobs():
-    """Load saved jobs from file."""
-    try:
-        if os.path.exists(JOBS_FILE):
-            with open(JOBS_FILE, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        return {"jobs": [], "last_updated": None, "resume_info": None}
-    except Exception as e:
-        logger.error(f"Error loading saved jobs: {e}")
-        return {"jobs": [], "last_updated": None, "resume_info": None}
+# def load_saved_jobs():
+#     """Load saved jobs from file."""
+#     # Deprecated - using localStorage instead
+#     pass
 
-def save_jobs_to_file(jobs_data):
-    """Save jobs to file."""
-    try:
-        with open(JOBS_FILE, 'w', encoding='utf-8') as f:
-            json.dump(jobs_data, f, ensure_ascii=False, indent=2)
-        logger.info(f"Saved {len(jobs_data.get('jobs', []))} jobs to file")
-    except Exception as e:
-        logger.error(f"Error saving jobs: {e}")
+# def save_jobs_to_file(jobs_data):
+#     """Save jobs to file."""
+#     # Deprecated - using localStorage instead
+#     pass
 
 def parse_resume(file_stream) -> str:
     """Reads a PDF file stream and returns its text content."""
@@ -74,31 +66,52 @@ def parse_resume(file_stream) -> str:
         return ""
 
 def extract_experience_and_skills(resume_text: str) -> dict:
-    """Uses Gemini API to extract experience level and skills from resume."""
+    """Uses Gemini API to extract experience level and skills from resume in multiple requests."""
     if not resume_text:
         return {"experience_level": "entry", "years_experience": 0, "skills": [], "job_titles": []}
     
     model = genai.GenerativeModel('gemini-1.5-flash')
+    
+    # Request 1: Extract basic experience and skills
+    basic_info = extract_basic_resume_info(resume_text, model)
+    
+    # Request 2: Generate job titles based on skills
+    job_titles = generate_job_titles_from_skills(basic_info.get('skills', []), model)
+    
+    # Request 3: Generate experience-level specific variants
+    experience_variants = generate_experience_level_variants(
+        job_titles, 
+        basic_info.get('experience_level', 'entry'),
+        basic_info.get('years_experience', 0),
+        model
+    )
+    
+    # Combine all results
+    result = basic_info.copy()
+    result['job_titles'] = experience_variants
+    
+    return result
+
+def extract_basic_resume_info(resume_text: str, model) -> dict:
+    """First Gemini request: Extract basic experience and skills."""
     prompt = f"""
     Analyze the following resume text and extract:
-    1. Total years of experience (sum of all work experience), If the resume dont have end date for experience instead it says Present, then it will be Current month and year as end date.
-    2. Experience level (entry, junior, mid, senior, lead)
-    3. Key technical skills
-    4. Relevant job titles based on experience level, Job titles should be based on the skills provided in the resume not on the current role. There can be multiple variations off the job titles.
+    1. Total years of experience (sum of all work experience). If the resume doesn't have end date for experience and says "Present", use current month and year as end date.
+    2. Experience level based on years
+    3. Key technical skills (programming languages, frameworks, tools, technologies)
 
     Experience Level Guidelines:
-    - Entry: 0-1 years (Associate, Entry Level, Junior)
-    - Junior: 1-3 years (SDE I, Full Stack Engineer I, Junior)
-    - Mid: 3-5 years (SDE II, Full Stack Engineer II, Mid-level)
-    - Senior: 5-8 years (Senior SDE, Senior Engineer, Senior)
-    - Lead: 8+ years (Lead Engineer, Principal Engineer, Lead)
+    - Entry: 0-1 years
+    - Junior: 1-3 years  
+    - Mid: 3-5 years
+    - Senior: 5-8 years
+    - Lead: 8+ years
 
-    Return a JSON object with:
+    Return ONLY a JSON object with:
     {{
         "experience_level": "entry|junior|mid|senior|lead",
         "years_experience": number,
-        "skills": ["skill1", "skill2", ...],
-        "job_titles": ["title1", "title2", ...]
+        "skills": ["skill1", "skill2", "skill3", ...]
     }}
 
     Resume Text:
@@ -109,99 +122,97 @@ def extract_experience_and_skills(resume_text: str) -> dict:
     
     try:
         response = model.generate_content(prompt)
-        # Clean up potential markdown formatting from the response
+        time.sleep(1)  # Rate limiting for Gemini API
         json_response_text = response.text.strip().replace("```json", "").replace("```", "")
         data = json.loads(json_response_text)
         return data
     except Exception as e:
-        logger.error(f"Error calling Gemini API for experience extraction: {e}")
-        return {"experience_level": "entry", "years_experience": 0, "skills": [], "job_titles": []}
+        logger.error(f"Error extracting basic resume info: {e}")
+        return {"experience_level": "entry", "years_experience": 0, "skills": []}
 
-def generate_experience_based_job_titles(experience_data: dict) -> list:
-    """Generate job titles based on experience level."""
-    experience_level = experience_data.get('experience_level', 'entry')
-    years_experience = experience_data.get('years_experience', 0)
+def generate_job_titles_from_skills(skills: list, model) -> list:
+    """Second Gemini request: Generate popular job titles based on skills."""
+    if not skills:
+        return ["Software Engineer", "Developer"]
     
-    # Base job titles by experience level
-    experience_titles = {
-        'entry': [
-            'Associate Software Engineer',
-            'Entry Level Developer',
-            'Junior Software Engineer',
-            'Software Engineer I',
-            'Full Stack Developer I',
-            'Frontend Developer I',
-            'Backend Developer I',
-            'Associate Developer',
-            'Graduate Software Engineer',
-            'Junior Full Stack Engineer'
-        ],
-        'junior': [
-            'Software Engineer I',
-            'Full Stack Engineer I',
-            'Frontend Engineer I',
-            'Backend Engineer I',
-            'Junior Software Engineer',
-            'Software Developer I',
-            'Web Developer I',
-            'Application Developer I',
-            'Systems Engineer I',
-            'Junior Full Stack Developer'
-        ],
-        'mid': [
-            'Software Engineer II',
-            'Full Stack Engineer II',
-            'Frontend Engineer II',
-            'Backend Engineer II',
-            'Mid-level Software Engineer',
-            'Software Developer II',
-            'Web Developer II',
-            'Application Developer II',
-            'Systems Engineer II',
-            'Full Stack Developer II'
-        ],
-        'senior': [
-            'Senior Software Engineer',
-            'Senior Full Stack Engineer',
-            'Senior Frontend Engineer',
-            'Senior Backend Engineer',
-            'Senior Software Developer',
-            'Senior Web Developer',
-            'Senior Application Developer',
-            'Senior Systems Engineer',
-            'Lead Software Engineer',
-            'Principal Software Engineer'
-        ],
-        'lead': [
-            'Lead Software Engineer',
-            'Lead Full Stack Engineer',
-            'Lead Frontend Engineer',
-            'Lead Backend Engineer',
-            'Principal Software Engineer',
-            'Senior Lead Developer',
-            'Technical Lead',
-            'Engineering Lead',
-            'Team Lead',
-            'Senior Principal Engineer'
-        ]
-    }
+    skills_text = ", ".join(skills)
+    prompt = f"""
+    Based on the following technical skills, generate popular and in-demand job titles that would be suitable for someone with these skills.
+
+    Skills: {skills_text}
+
+    Requirements:
+    1. Focus on popular, in-demand job titles in the current market
+    2. Consider combinations of the provided skills
+    3. Include both specific and general titles
+    4. Prioritize titles that are commonly posted on job boards
+    5. Include 8-12 different job titles
+
+    Examples of good job titles:
+    - Software Engineer
+    - Full Stack Developer  
+    - Python Developer
+    - React Developer
+    - DevOps Engineer
+    - Backend Engineer
+    - Frontend Engineer
+
+    Return ONLY a JSON array of job titles:
+    ["title1", "title2", "title3", ...]
+    """
     
-    # Get titles for the experience level
-    titles = experience_titles.get(experience_level, experience_titles['entry'])
+    try:
+        response = model.generate_content(prompt)
+        time.sleep(1)  # Rate limiting for Gemini API
+        json_response_text = response.text.strip().replace("```json", "").replace("```", "")
+        job_titles = json.loads(json_response_text)
+        return job_titles if isinstance(job_titles, list) else []
+    except Exception as e:
+        logger.error(f"Error generating job titles from skills: {e}")
+        return ["Software Engineer", "Developer"]
+
+def generate_experience_level_variants(job_titles: list, experience_level: str, years_experience: int, model) -> list:
+    """Third Gemini request: Generate experience-level specific variants of job titles."""
+    if not job_titles:
+        return ["Software Engineer"]
     
-    # Add experience-specific keywords
-    if experience_level == 'entry':
-        titles.extend(['Associate', 'Entry Level', 'Graduate', 'Fresher'])
-    elif experience_level == 'junior':
-        titles.extend(['Junior', 'I', 'Early Career'])
-    elif experience_level == 'mid':
-        titles.extend(['II', 'Mid-level', 'Intermediate'])
-    elif experience_level == 'senior':
-        titles.extend(['Senior', 'III', 'Advanced'])
-    elif experience_level == 'lead':
-        titles.extend(['Lead', 'Principal', 'Senior Lead', 'IV'])
+    titles_text = ", ".join(job_titles)
+    prompt = f"""
+    Take the following job titles and create variants that are appropriate for someone with {experience_level} level experience ({years_experience} years).
+
+    Original Job Titles: {titles_text}
+    Experience Level: {experience_level}
+    Years of Experience: {years_experience}
+
+    Guidelines for experience levels:
+    - Entry (0-1 years): Add prefixes like "Associate", "Entry Level", "Junior", "Graduate", or suffixes like "I", "Trainee"
+    - Junior (1-3 years): Add prefixes like "Junior", or suffixes like "I", "1"
+    - Mid (3-5 years): Add suffixes like "II", "2" or keep original titles
+    - Senior (5-8 years): Add prefixes like "Senior" or suffixes like "III", "3"
+    - Lead (8+ years): Add prefixes like "Senior", "Lead", "Principal" or suffixes like "IV", "Lead"
+
+    Examples:
+    - Entry: "Associate Software Engineer", "Junior Python Developer", "Graduate Full Stack Developer"
+    - Junior: "Software Engineer I", "Junior Backend Developer", "Python Developer I"
+    - Mid: "Software Engineer II", "Full Stack Developer", "Python Developer"
+    - Senior: "Senior Software Engineer", "Senior Python Developer", "Senior Full Stack Developer"
+    - Lead: "Lead Software Engineer", "Principal Python Developer", "Senior Lead Developer"
+
+    Return ONLY a JSON array of 10-15 experience-appropriate job title variants:
+    ["title1", "title2", "title3", ...]
+    """
     
-    return titles
+    try:
+        response = model.generate_content(prompt)
+        time.sleep(1)  # Rate limiting for Gemini API
+        json_response_text = response.text.strip().replace("```json", "").replace("```", "")
+        variants = json.loads(json_response_text)
+        return variants if isinstance(variants, list) else job_titles
+    except Exception as e:
+        logger.error(f"Error generating experience level variants: {e}")
+        return job_titles
+
+# Removed: generate_experience_based_job_titles - replaced with AI-generated titles
 
 def get_experience_based_search_filters(experience_data: dict) -> dict:
     """Get search filters based on experience level."""
@@ -485,20 +496,29 @@ def enhance_job_with_apply_links(job: dict) -> dict:
         return job
 
 def discover_jobs_enhanced(experience_data: dict, date_filter: str = "all", location_filter: str = "India") -> list:
-    """Enhanced job discovery using free alternatives instead of SerpAPI"""
+    """Enhanced job discovery using AI-generated job titles from resume analysis"""
     all_jobs = []
     
-    # Use simpler, more common job titles instead of experience-specific ones
-    common_job_titles = [
-        "Software Engineer",
-        "Python Developer", 
-        "Java Developer",
-        "Full Stack Developer",
-        "Frontend Developer",
-        "Backend Developer",
-        "Web Developer",
-        "Software Developer"
-    ]
+    # Use AI-generated job titles from resume analysis
+    ai_generated_titles = experience_data.get('job_titles', [])
+    
+    # Fallback to common titles if AI generation failed
+    if not ai_generated_titles:
+        logger.warning("No AI-generated job titles found, using fallback titles")
+        ai_generated_titles = [
+            "Software Engineer",
+            "Python Developer", 
+            "Java Developer",
+            "Full Stack Developer",
+            "Frontend Developer",
+            "Backend Developer",
+            "Web Developer",
+            "Software Developer"
+        ]
+    
+    # Use the AI-generated titles for job search
+    job_titles_to_search = ai_generated_titles[:8]  # Limit to top 8 titles for efficiency
+    logger.info(f"Searching for jobs with AI-generated titles: {job_titles_to_search}")
     
     # Get experience filters for filtering results
     experience_filters = get_experience_based_search_filters(experience_data)
@@ -528,7 +548,7 @@ def discover_jobs_enhanced(experience_data: dict, date_filter: str = "all", loca
     ]
     
     # Process each scraper sequentially for better reliability
-    for title in common_job_titles[:4]:  # Limit to top 4 job titles
+    for title in job_titles_to_search[:4]:  # Limit to top 4 AI-generated job titles
         for config in search_configs:
             try:
                 for location in config["locations"]:
@@ -743,8 +763,45 @@ def clean_job_data_updated(job: dict, source: str = "Unknown") -> dict:
         logger.error(f"Error cleaning job data: {e}")
         return None
 
-def simple_text_similarity(text1: str, text2: str) -> float:
-    """Calculate simple text similarity using word overlap."""
+def calculate_tfidf_similarity(resume_text: str, job_descriptions: list) -> list:
+    """Calculate TF-IDF based cosine similarity between resume and job descriptions."""
+    if not resume_text or not job_descriptions:
+        return [0.0] * len(job_descriptions)
+    
+    try:
+        # Combine resume and all job descriptions for TF-IDF vectorization
+        documents = [resume_text] + job_descriptions
+        
+        # Create TF-IDF vectorizer with optimized parameters for job matching
+        vectorizer = TfidfVectorizer(
+            max_features=5000,  # Limit vocabulary size
+            stop_words='english',  # Remove common English stop words
+            ngram_range=(1, 2),  # Include both unigrams and bigrams
+            min_df=1,  # Minimum document frequency
+            max_df=0.95,  # Maximum document frequency (ignore very common words)
+            lowercase=True,
+            token_pattern=r'\b[a-zA-Z][a-zA-Z0-9+#\.]*\b'  # Include tech terms like C++, C#, .NET
+        )
+        
+        # Fit and transform documents
+        tfidf_matrix = vectorizer.fit_transform(documents)
+        
+        # Calculate cosine similarity between resume (first document) and each job description
+        resume_vector = tfidf_matrix[0:1]  # First row (resume)
+        job_vectors = tfidf_matrix[1:]  # Remaining rows (job descriptions)
+        
+        # Calculate cosine similarities
+        similarities = cosine_similarity(resume_vector, job_vectors).flatten()
+        
+        return similarities.tolist()
+        
+    except Exception as e:
+        logger.error(f"Error in TF-IDF similarity calculation: {e}")
+        # Fallback to simple similarity
+        return [simple_jaccard_similarity(resume_text, desc) for desc in job_descriptions]
+
+def simple_jaccard_similarity(text1: str, text2: str) -> float:
+    """Fallback simple text similarity using Jaccard similarity."""
     if not text1 or not text2:
         return 0.0
     
@@ -767,12 +824,14 @@ def simple_text_similarity(text1: str, text2: str) -> float:
     return intersection / union if union > 0 else 0.0
 
 def rank_jobs_by_similarity(resume_text: str, jobs: list, experience_data: dict) -> list:
-    """Ranks jobs based on simple text similarity between resume and job description, with experience bonus."""
+    """Ranks jobs based on TF-IDF cosine similarity between resume and job description, with experience bonus."""
     if not jobs:
         return []
     
     # Enhance job descriptions for better matching
     enhanced_jobs = []
+    job_descriptions = []
+    
     for job in jobs:
         enhanced_job = job.copy()
         description = job.get('description', '')
@@ -795,33 +854,66 @@ def rank_jobs_by_similarity(resume_text: str, jobs: list, experience_data: dict)
             enhanced_job['description'] = '. '.join(filter(None, enhanced_desc_parts))
         
         enhanced_jobs.append(enhanced_job)
+        job_descriptions.append(enhanced_job['description'])
     
     try:
-        # Calculate similarity for each job
+        # Calculate TF-IDF similarities for all jobs at once
+        similarities = calculate_tfidf_similarity(resume_text, job_descriptions)
+        
+        # Apply similarity scores and experience bonuses
         for i, job in enumerate(enhanced_jobs):
-            job_text = job.get('description', '')
-            
-            # Calculate base similarity score
-            similarity = simple_text_similarity(resume_text, job_text)
-            base_score = similarity * 100
+            # Convert similarity to percentage (0-1 -> 0-100)
+            base_score = similarities[i] * 100
             
             # Add experience level bonus
             experience_bonus = get_experience_bonus(job, experience_data)
-            final_score = min(100, max(10, base_score + experience_bonus))  # Ensure score is between 10-100
+            
+            # Add skills matching bonus
+            skills_bonus = get_skills_matching_bonus(job, experience_data)
+            
+            # Calculate final score with bonuses
+            final_score = min(100, max(5, base_score + experience_bonus + skills_bonus))
             
             job['match_score'] = round(final_score, 2)
             
+            # Add debug info for top matches
+            if final_score > 70:
+                logger.info(f"High match: {job.get('title', 'Unknown')} - Base: {base_score:.1f}, Exp: {experience_bonus:.1f}, Skills: {skills_bonus:.1f}, Final: {final_score:.1f}")
+            
     except Exception as e:
-        logger.error(f"Error in similarity calculation: {e}")
-        # Fallback scoring
+        logger.error(f"Error in TF-IDF similarity calculation: {e}")
+        # Fallback scoring with some randomization for variety
         for i, job in enumerate(enhanced_jobs):
-            base_score = 60 + (i % 20)  # Scores between 60-80
+            base_score = 40 + (i % 30) + np.random.randint(0, 20)  # Scores between 40-90
             experience_bonus = get_experience_bonus(job, experience_data)
-            job['match_score'] = round(min(100, base_score + experience_bonus), 2)
+            skills_bonus = get_skills_matching_bonus(job, experience_data)
+            job['match_score'] = round(min(100, base_score + experience_bonus + skills_bonus), 2)
         
     # Sort jobs by score in descending order
     sorted_jobs = sorted(enhanced_jobs, key=lambda x: x['match_score'], reverse=True)
     return sorted_jobs
+
+def get_skills_matching_bonus(job: dict, experience_data: dict) -> float:
+    """Calculate bonus based on skills matching between resume and job."""
+    user_skills = experience_data.get('skills', [])
+    if not user_skills:
+        return 0.0
+    
+    job_text = f"{job.get('title', '')} {job.get('description', '')}".lower()
+    
+    # Count how many user skills are mentioned in the job
+    skills_found = 0
+    for skill in user_skills:
+        if skill.lower() in job_text:
+            skills_found += 1
+    
+    # Calculate bonus: up to 15 points based on skill match percentage
+    if len(user_skills) > 0:
+        skill_match_ratio = skills_found / len(user_skills)
+        skills_bonus = skill_match_ratio * 15  # Max 15 points
+        return skills_bonus
+    
+    return 0.0
 
 def get_experience_bonus(job: dict, experience_data: dict) -> float:
     """Calculate experience bonus for job matching."""
@@ -917,54 +1009,26 @@ def find_jobs():
         logger.error(f"Unexpected error in find_jobs: {e}")
         return jsonify({"error": "An unexpected error occurred. Please try again."}), 500
 
-@app.route('/save-jobs', methods=['POST'])
-def save_jobs():
-    """Save jobs to local storage."""
-    try:
-        data = request.get_json()
-        jobs = data.get('jobs', [])
-        resume_info = data.get('resume_info', {})
-        
-        # Prepare data to save
-        jobs_data = {
-            "jobs": jobs,
-            "last_updated": datetime.now().isoformat(),
-            "resume_info": resume_info
-        }
-        
-        # Save to file
-        save_jobs_to_file(jobs_data)
-        
-        return jsonify({"success": True, "message": f"Saved {len(jobs)} jobs successfully"})
-        
-    except Exception as e:
-        logger.error(f"Error saving jobs: {e}")
-        return jsonify({"error": "Failed to save jobs"}), 500
+# Server-side job saving routes removed - now using localStorage
+# These routes are no longer needed as we're using browser localStorage
 
-@app.route('/get-saved-jobs', methods=['GET'])
-def get_saved_jobs():
-    """Retrieve saved jobs from local storage."""
-    try:
-        saved_data = load_saved_jobs()
-        return jsonify(saved_data)
-        
-    except Exception as e:
-        logger.error(f"Error loading saved jobs: {e}")
-        return jsonify({"error": "Failed to load saved jobs"}), 500
+# @app.route('/save-jobs', methods=['POST'])
+# def save_jobs():
+#     """Save jobs to local storage."""
+#     # Deprecated - using localStorage instead
+#     pass
 
-@app.route('/clear-saved-jobs', methods=['POST'])
-def clear_saved_jobs():
-    """Clear saved jobs from local storage."""
-    try:
-        # Clear the file
-        if os.path.exists(JOBS_FILE):
-            os.remove(JOBS_FILE)
-        
-        return jsonify({"success": True, "message": "Saved jobs cleared successfully"})
-        
-    except Exception as e:
-        logger.error(f"Error clearing saved jobs: {e}")
-        return jsonify({"error": "Failed to clear saved jobs"}), 500
+# @app.route('/get-saved-jobs', methods=['GET'])
+# def get_saved_jobs():
+#     """Retrieve saved jobs from local storage."""
+#     # Deprecated - using localStorage instead
+#     pass
+
+# @app.route('/clear-saved-jobs', methods=['POST'])
+# def clear_saved_jobs():
+#     """Clear saved jobs from local storage."""
+#     # Deprecated - using localStorage instead
+#     pass
 
 if __name__ == '__main__':
     app.run(debug=True)

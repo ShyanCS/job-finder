@@ -10,12 +10,21 @@ from app import discover_jobs_enhanced, rank_jobs_by_similarity
 def test_complete_flow():
     """Test the complete job discovery and ranking flow"""
     
-    # Mock experience data
+    # Mock experience data with AI-generated job titles
     experience_data = {
         "experience_level": "mid",
         "years_experience": 3,
         "skills": ["Python", "Django", "React", "JavaScript", "AWS"],
-        "job_titles": ["Software Engineer", "Python Developer", "Full Stack Developer"]
+        "job_titles": [
+            "Software Engineer II", 
+            "Python Developer", 
+            "Full Stack Developer",
+            "Backend Engineer II",
+            "Django Developer",
+            "React Developer",
+            "Mid-level Software Engineer",
+            "Full Stack Engineer II"
+        ]
     }
     
     # Mock resume text

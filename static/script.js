@@ -26,6 +26,11 @@ let currentLocationFilter = 'India';
 let currentJobs = [];
 let currentResumeInfo = null;
 
+// Pagination variables
+let currentPage = 1;
+let jobsPerPage = 12;
+let totalPages = 1;
+
 // File upload handling
 fileUploadArea.addEventListener('click', () => {
     fileInput.click();
@@ -92,6 +97,69 @@ loadSavedBtn.addEventListener('click', loadSavedJobs);
 newSearchBtn.addEventListener('click', startNewSearch);
 clearSavedBtn.addEventListener('click', clearSavedJobs);
 loadSavedInfoBtn.addEventListener('click', loadSavedJobs);
+
+// Add export/import functionality
+function exportSavedJobs() {
+    try {
+        const savedDataString = localStorage.getItem('ai_job_finder_saved_jobs');
+        
+        if (!savedDataString) {
+            showError('No saved jobs to export');
+            return;
+        }
+
+        const savedData = JSON.parse(savedDataString);
+        const dataStr = JSON.stringify(savedData, null, 2);
+        const dataBlob = new Blob([dataStr], { type: 'application/json' });
+        
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(dataBlob);
+        link.download = `ai_job_finder_jobs_${new Date().toISOString().split('T')[0]}.json`;
+        link.click();
+        
+        showSavedStatus('Jobs exported successfully');
+    } catch (error) {
+        showError('Failed to export saved jobs');
+        console.error('Export error:', error);
+    }
+}
+
+function importSavedJobs() {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json';
+    
+    input.onchange = function(event) {
+        const file = event.target.files[0];
+        if (!file) return;
+        
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            try {
+                const importedData = JSON.parse(e.target.result);
+                
+                // Validate the imported data structure
+                if (!importedData.jobs || !Array.isArray(importedData.jobs)) {
+                    showError('Invalid job data format');
+                    return;
+                }
+                
+                // Save to localStorage
+                localStorage.setItem('ai_job_finder_saved_jobs', JSON.stringify(importedData));
+                
+                showSavedStatus(`Successfully imported ${importedData.jobs.length} jobs`);
+                showSavedJobsInfo(importedData.jobs.length, importedData.last_updated);
+                
+            } catch (error) {
+                showError('Failed to import jobs - invalid file format');
+                console.error('Import error:', error);
+            }
+        };
+        reader.readAsText(file);
+    };
+    
+    input.click();
+}
 
 // Check for saved jobs on page load
 document.addEventListener('DOMContentLoaded', checkForSavedJobs);
@@ -177,77 +245,81 @@ submitBtn.addEventListener('click', async function(event) {
     }
 });
 
-async function saveJobs() {
+function saveJobs() {
     if (currentJobs.length === 0) {
         showError('No jobs to save. Please search for jobs first.');
         return;
     }
 
     try {
-        const response = await fetch('/save-jobs', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-                jobs: currentJobs,
-                resume_info: currentResumeInfo
-            })
-        });
+        const savedData = {
+            jobs: currentJobs,
+            resume_info: currentResumeInfo,
+            last_updated: new Date().toISOString(),
+            version: '1.0' // For future compatibility
+        };
 
-        const result = await response.json();
-
-        if (result.success) {
-            showSavedStatus(result.message);
-        } else {
-            showError(result.error || 'Failed to save jobs');
-        }
+        // Save to localStorage
+        localStorage.setItem('ai_job_finder_saved_jobs', JSON.stringify(savedData));
+        
+        showSavedStatus(`Successfully saved ${currentJobs.length} jobs to your browser storage`);
+        
+        // Update the saved jobs info display
+        showSavedJobsInfo(currentJobs.length, savedData.last_updated);
+        
     } catch (error) {
-        showError('Network error while saving jobs');
+        if (error.name === 'QuotaExceededError') {
+            showError('Browser storage is full. Please clear some data and try again.');
+        } else {
+            showError('Failed to save jobs to browser storage');
+        }
         console.error('Save error:', error);
     }
 }
 
-async function loadSavedJobs() {
+function loadSavedJobs() {
     try {
-        const response = await fetch('/get-saved-jobs');
-        const savedData = await response.json();
+        const savedDataString = localStorage.getItem('ai_job_finder_saved_jobs');
+        
+        if (!savedDataString) {
+            showError('No saved jobs found in browser storage');
+            hideSavedJobsInfo();
+            return;
+        }
+
+        const savedData = JSON.parse(savedDataString);
 
         if (savedData.jobs && savedData.jobs.length > 0) {
             currentJobs = savedData.jobs;
             currentResumeInfo = savedData.resume_info;
             
+            // Reset to first page when loading saved jobs
+            currentPage = 1;
+            
             displayJobs(savedData.jobs);
             showSavedStatus(`Loaded ${savedData.jobs.length} saved jobs from ${formatDate(savedData.last_updated)}`);
         } else {
-            showError('No saved jobs found');
+            showError('No valid jobs found in saved data');
+            hideSavedJobsInfo();
         }
     } catch (error) {
-        showError('Network error while loading saved jobs');
+        showError('Failed to load saved jobs from browser storage');
         console.error('Load error:', error);
+        hideSavedJobsInfo();
     }
 }
 
-async function clearSavedJobs() {
-    if (!confirm('Are you sure you want to clear all saved jobs? This action cannot be undone.')) {
+function clearSavedJobs() {
+    if (!confirm('Are you sure you want to clear all saved jobs from your browser storage? This action cannot be undone.')) {
         return;
     }
 
     try {
-        const response = await fetch('/clear-saved-jobs', {
-            method: 'POST'
-        });
-
-        const result = await response.json();
-
-        if (result.success) {
-            showSavedStatus(result.message);
-            hideSavedJobsInfo();
-        } else {
-            showError(result.error || 'Failed to clear saved jobs');
-        }
+        localStorage.removeItem('ai_job_finder_saved_jobs');
+        showSavedStatus('Successfully cleared all saved jobs from browser storage');
+        hideSavedJobsInfo();
     } catch (error) {
-        showError('Network error while clearing saved jobs');
+        showError('Failed to clear saved jobs from browser storage');
         console.error('Clear error:', error);
     }
 }
@@ -257,6 +329,10 @@ function startNewSearch() {
     fileInput.value = '';
     currentJobs = [];
     currentResumeInfo = null;
+    
+    // Reset pagination
+    currentPage = 1;
+    totalPages = 1;
     
     // Reset UI
     const uploadText = fileUploadArea.querySelector('.upload-text');
@@ -269,25 +345,37 @@ function startNewSearch() {
     hideError();
     hideSavedStatus();
     
+    // Remove pagination controls
+    const existingPagination = document.getElementById('pagination-controls');
+    if (existingPagination) {
+        existingPagination.remove();
+    }
+    
     // Scroll to top
     window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
-async function checkForSavedJobs() {
+function checkForSavedJobs() {
     try {
-        const response = await fetch('/get-saved-jobs');
-        const savedData = await response.json();
-
-        if (savedData.jobs && savedData.jobs.length > 0) {
-            showSavedJobsInfo(savedData.jobs.length, savedData.last_updated);
+        const savedDataString = localStorage.getItem('ai_job_finder_saved_jobs');
+        
+        if (savedDataString) {
+            const savedData = JSON.parse(savedDataString);
+            
+            if (savedData.jobs && savedData.jobs.length > 0) {
+                showSavedJobsInfo(savedData.jobs.length, savedData.last_updated);
+            }
         }
     } catch (error) {
         console.error('Error checking for saved jobs:', error);
+        // If there's corrupted data, remove it
+        localStorage.removeItem('ai_job_finder_saved_jobs');
     }
 }
 
 function showSavedJobsInfo(jobCount, lastUpdated) {
-    const infoText = `You have ${jobCount} saved jobs from ${formatDate(lastUpdated)}. Load them to avoid making new API requests.`;
+    const storageInfo = getSavedJobsStorageInfo();
+    const infoText = `You have ${jobCount} saved jobs from ${formatDate(lastUpdated)} (${storageInfo.size} in browser storage). Load them to avoid making new API requests.`;
     savedJobsInfo.querySelector('p').textContent = infoText;
     savedJobsInfo.style.display = 'block';
 }
@@ -297,7 +385,10 @@ function hideSavedJobsInfo() {
 }
 
 function showSavedStatus(message) {
-    savedStatus.textContent = message;
+    const storageInfo = getSavedJobsStorageInfo();
+    const fullMessage = `${message} (Storage used: ${storageInfo.size})`;
+    
+    savedStatus.textContent = fullMessage;
     savedStatus.classList.add('show');
     
     // Auto-hide after 5 seconds
@@ -321,6 +412,46 @@ function formatDate(dateString) {
     }
 }
 
+// localStorage utility functions
+function getStorageSize() {
+    try {
+        let total = 0;
+        for (let key in localStorage) {
+            if (localStorage.hasOwnProperty(key)) {
+                total += localStorage[key].length + key.length;
+            }
+        }
+        return total;
+    } catch (error) {
+        return 0;
+    }
+}
+
+function formatStorageSize(bytes) {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+
+function getSavedJobsStorageInfo() {
+    try {
+        const savedDataString = localStorage.getItem('ai_job_finder_saved_jobs');
+        if (savedDataString) {
+            const size = savedDataString.length * 2; // Rough estimate (UTF-16)
+            return {
+                exists: true,
+                size: formatStorageSize(size),
+                rawSize: size
+            };
+        }
+        return { exists: false, size: '0 Bytes', rawSize: 0 };
+    } catch (error) {
+        return { exists: false, size: '0 Bytes', rawSize: 0 };
+    }
+}
+
 function displayJobs(jobs) {
     // Update results count
     resultsCount.textContent = `Found ${jobs.length} job${jobs.length !== 1 ? 's' : ''} for you`;
@@ -331,17 +462,166 @@ function displayJobs(jobs) {
     // Update statistics
     updateStatistics(jobs);
     
+    // Initialize pagination
+    currentPage = 1;
+    totalPages = Math.ceil(jobs.length / jobsPerPage);
+    
+    // Display paginated jobs
+    displayPaginatedJobs(jobs);
+    
+    // Show results section
+    showResults();
+}
+
+function displayPaginatedJobs(jobs) {
     // Clear previous results
     jobsGrid.innerHTML = '';
     
-    // Create job cards
-    jobs.forEach(job => {
+    // Calculate start and end indices for current page
+    const startIndex = (currentPage - 1) * jobsPerPage;
+    const endIndex = startIndex + jobsPerPage;
+    const jobsToShow = jobs.slice(startIndex, endIndex);
+    
+    // Create job cards for current page
+    jobsToShow.forEach(job => {
         const jobCard = createJobCard(job);
         jobsGrid.appendChild(jobCard);
     });
     
-    // Show results section
-    showResults();
+    // Update pagination controls
+    updatePaginationControls();
+}
+
+function updatePaginationControls() {
+    // Remove existing pagination if it exists
+    const existingPagination = document.getElementById('pagination-controls');
+    if (existingPagination) {
+        existingPagination.remove();
+    }
+    
+    // Only show pagination if there are multiple pages
+    if (totalPages <= 1) {
+        return;
+    }
+    
+    // Create pagination container
+    const paginationContainer = document.createElement('div');
+    paginationContainer.id = 'pagination-controls';
+    paginationContainer.className = 'pagination-controls';
+    
+    // Create pagination info
+    const paginationInfo = document.createElement('div');
+    paginationInfo.className = 'pagination-info';
+    const startJob = (currentPage - 1) * jobsPerPage + 1;
+    const endJob = Math.min(currentPage * jobsPerPage, currentJobs.length);
+    paginationInfo.textContent = `Showing ${startJob}-${endJob} of ${currentJobs.length} jobs`;
+    
+    // Create pagination buttons container
+    const paginationButtons = document.createElement('div');
+    paginationButtons.className = 'pagination-buttons';
+    
+    // Previous button
+    const prevButton = document.createElement('button');
+    prevButton.className = `pagination-btn ${currentPage === 1 ? 'disabled' : ''}`;
+    prevButton.innerHTML = '<i class="fas fa-chevron-left"></i> Previous';
+    prevButton.disabled = currentPage === 1;
+    prevButton.addEventListener('click', () => {
+        if (currentPage > 1) {
+            currentPage--;
+            displayPaginatedJobs(currentJobs);
+            scrollToResults();
+        }
+    });
+    
+    // Page numbers
+    const pageNumbers = document.createElement('div');
+    pageNumbers.className = 'page-numbers';
+    
+    // Calculate which page numbers to show
+    let startPage = Math.max(1, currentPage - 2);
+    let endPage = Math.min(totalPages, currentPage + 2);
+    
+    // Adjust if we're near the beginning or end
+    if (currentPage <= 3) {
+        endPage = Math.min(5, totalPages);
+    }
+    if (currentPage >= totalPages - 2) {
+        startPage = Math.max(1, totalPages - 4);
+    }
+    
+    // First page and ellipsis
+    if (startPage > 1) {
+        const firstPage = createPageButton(1);
+        pageNumbers.appendChild(firstPage);
+        
+        if (startPage > 2) {
+            const ellipsis = document.createElement('span');
+            ellipsis.className = 'pagination-ellipsis';
+            ellipsis.textContent = '...';
+            pageNumbers.appendChild(ellipsis);
+        }
+    }
+    
+    // Page number buttons
+    for (let i = startPage; i <= endPage; i++) {
+        const pageButton = createPageButton(i);
+        pageNumbers.appendChild(pageButton);
+    }
+    
+    // Last page and ellipsis
+    if (endPage < totalPages) {
+        if (endPage < totalPages - 1) {
+            const ellipsis = document.createElement('span');
+            ellipsis.className = 'pagination-ellipsis';
+            ellipsis.textContent = '...';
+            pageNumbers.appendChild(ellipsis);
+        }
+        
+        const lastPage = createPageButton(totalPages);
+        pageNumbers.appendChild(lastPage);
+    }
+    
+    // Next button
+    const nextButton = document.createElement('button');
+    nextButton.className = `pagination-btn ${currentPage === totalPages ? 'disabled' : ''}`;
+    nextButton.innerHTML = 'Next <i class="fas fa-chevron-right"></i>';
+    nextButton.disabled = currentPage === totalPages;
+    nextButton.addEventListener('click', () => {
+        if (currentPage < totalPages) {
+            currentPage++;
+            displayPaginatedJobs(currentJobs);
+            scrollToResults();
+        }
+    });
+    
+    // Assemble pagination
+    paginationButtons.appendChild(prevButton);
+    paginationButtons.appendChild(pageNumbers);
+    paginationButtons.appendChild(nextButton);
+    
+    paginationContainer.appendChild(paginationInfo);
+    paginationContainer.appendChild(paginationButtons);
+    
+    // Insert pagination after jobs grid
+    const resultsSection = document.getElementById('results-section');
+    resultsSection.appendChild(paginationContainer);
+}
+
+function createPageButton(pageNumber) {
+    const button = document.createElement('button');
+    button.className = `page-btn ${pageNumber === currentPage ? 'active' : ''}`;
+    button.textContent = pageNumber;
+    button.addEventListener('click', () => {
+        currentPage = pageNumber;
+        displayPaginatedJobs(currentJobs);
+        scrollToResults();
+    });
+    return button;
+}
+
+function scrollToResults() {
+    const resultsSection = document.getElementById('results-section');
+    resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 function updateStatistics(jobs) {
