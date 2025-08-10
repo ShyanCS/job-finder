@@ -62,3 +62,13 @@ logs/
 # Temporary files
 *.tmp
 *.temp
+
+# Test files (keep final_test.py)
+test_*.py
+demo_*.py
+test_*.html
+*_test.py
+
+# Job data files
+saved_jobs.json
+jobs_*.json

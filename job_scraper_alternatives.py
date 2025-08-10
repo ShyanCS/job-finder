@@ -299,10 +299,15 @@ class JobScraperAlternatives:
                             desc_parts.append(f"Salary: {job_data.get('job_salary')}")
                         description = '. '.join(desc_parts)
                     
+                    # Safely handle location concatenation
+                    job_city = job_data.get('job_city') or ''
+                    job_country = job_data.get('job_country') or ''
+                    location = f"{job_city}, {job_country}".strip(', ') if job_city or job_country else location
+                    
                     job = {
                         'title': job_data.get('job_title', ''),
                         'company_name': job_data.get('employer_name', ''),
-                        'location': job_data.get('job_city', '') + ', ' + job_data.get('job_country', ''),
+                        'location': location,
                         'description': description,
                         'salary': job_data.get('job_salary', ''),
                         'job_type': job_data.get('job_employment_type', ''),
