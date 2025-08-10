@@ -8,7 +8,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 class JobScraperAlternatives:
-    """Alternative job scraping methods to replace SerpAPI"""
+    """Alternative job scraping methods to replace RapidAPI"""
     
     def __init__(self):
         self.headers = {
